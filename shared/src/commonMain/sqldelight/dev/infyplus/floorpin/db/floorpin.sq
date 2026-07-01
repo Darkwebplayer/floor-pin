@@ -1,0 +1,172 @@
+-- FloorPin local store (offline-first single source of truth).
+-- Timestamps are epoch millis (INTEGER). Ids are client/server UUIDs (TEXT).
+
+CREATE TABLE project (
+  id TEXT NOT NULL PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  createdAt INTEGER NOT NULL DEFAULT 0,
+  updatedAt INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE floorPlan (
+  id TEXT NOT NULL PRIMARY KEY,
+  projectId TEXT NOT NULL,
+  name TEXT NOT NULL,
+  sub TEXT,
+  imageKey TEXT,
+  imageUrl TEXT,
+  createdAt INTEGER NOT NULL DEFAULT 0,
+  updatedAt INTEGER NOT NULL DEFAULT 0,
+  width REAL,
+  height REAL
+);
+
+CREATE TABLE location (
+  id TEXT NOT NULL PRIMARY KEY,
+  floorPlanId TEXT NOT NULL,
+  name TEXT NOT NULL,
+  x REAL NOT NULL,
+  y REAL NOT NULL,
+  updatedAt INTEGER NOT NULL DEFAULT 0,
+  createdAt INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE issue (
+  id TEXT NOT NULL PRIMARY KEY,
+  locationId TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL DEFAULT 'open',
+  priority TEXT,
+  type TEXT,
+  x REAL,
+  y REAL,
+  createdAt INTEGER NOT NULL DEFAULT 0,
+  updatedAt INTEGER NOT NULL DEFAULT 0,
+  resolvedAt INTEGER,
+  category TEXT,
+  assignedTo TEXT
+);
+
+CREATE TABLE photo (
+  id TEXT NOT NULL PRIMARY KEY,
+  issueId TEXT NOT NULL,
+  imageKey TEXT,
+  imageUrl TEXT,
+  createdAt INTEGER NOT NULL DEFAULT 0,
+  caption TEXT
+);
+
+CREATE TABLE activity (
+  id TEXT NOT NULL PRIMARY KEY,
+  entityType TEXT,
+  entityId TEXT,
+  action TEXT,
+  actor TEXT,
+  summary TEXT,
+  createdAt INTEGER NOT NULL DEFAULT 0
+);
+
+-- Pending offline operations, replayed via POST /api/sync.
+CREATE TABLE outbox (
+  opId TEXT NOT NULL PRIMARY KEY,
+  entity TEXT NOT NULL,        -- projects | locations | issues
+  op TEXT NOT NULL,            -- create | update | delete
+  entityId TEXT NOT NULL,
+  payload TEXT NOT NULL,       -- JSON body for the op
+  updatedAt INTEGER NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0
+);
+
+-- ── project ──
+projectsAll:
+SELECT * FROM project ORDER BY createdAt DESC;
+projectById:
+SELECT * FROM project WHERE id = ?;
+upsertProject:
+INSERT OR REPLACE INTO project(id, name, description, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?);
+deleteProject:
+DELETE FROM project WHERE id = ?;
+
+-- ── floorPlan ──
+floorPlansByProject:
+SELECT * FROM floorPlan WHERE projectId = ? ORDER BY createdAt DESC;
+floorPlanById:
+SELECT * FROM floorPlan WHERE id = ?;
+upsertFloorPlan:
+INSERT OR REPLACE INTO floorPlan(id, projectId, name, sub, imageKey, imageUrl, createdAt, updatedAt, width, height) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+deleteFloorPlan:
+DELETE FROM floorPlan WHERE id = ?;
+
+-- ── location ──
+locationsByFloorPlan:
+SELECT * FROM location WHERE floorPlanId = ? ORDER BY updatedAt ASC;
+locationById:
+SELECT * FROM location WHERE id = ?;
+upsertLocation:
+INSERT OR REPLACE INTO location(id, floorPlanId, name, x, y, updatedAt, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?);
+renameLocation:
+UPDATE location SET name = ?, updatedAt = ? WHERE id = ?;
+moveLocation:
+UPDATE location SET x = ?, y = ?, updatedAt = ? WHERE id = ?;
+deleteLocation:
+DELETE FROM location WHERE id = ?;
+
+-- ── issue ──
+issuesByLocation:
+SELECT * FROM issue WHERE locationId = ? ORDER BY createdAt DESC;
+issuesByFloorPlan:
+SELECT issue.* FROM issue JOIN location ON issue.locationId = location.id WHERE location.floorPlanId = ?;
+issueById:
+SELECT * FROM issue WHERE id = ?;
+upsertIssue:
+INSERT OR REPLACE INTO issue(id, locationId, title, description, status, priority, type, x, y, createdAt, updatedAt, resolvedAt, category, assignedTo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+updateIssueStatus:
+UPDATE issue SET status = ?, resolvedAt = ?, updatedAt = ? WHERE id = ?;
+moveIssue:
+UPDATE issue SET x = ?, y = ?, updatedAt = ? WHERE id = ?;
+deleteIssue:
+DELETE FROM issue WHERE id = ?;
+
+-- ── photo ──
+photosByIssue:
+SELECT * FROM photo WHERE issueId = ? ORDER BY createdAt ASC;
+photosByFloorPlan:
+SELECT photo.* FROM photo
+  JOIN issue ON photo.issueId = issue.id
+  JOIN location ON issue.locationId = location.id
+  WHERE location.floorPlanId = ?;
+upsertPhoto:
+INSERT OR REPLACE INTO photo(id, issueId, imageKey, imageUrl, createdAt, caption) VALUES (?, ?, ?, ?, ?, ?);
+deletePhoto:
+DELETE FROM photo WHERE id = ?;
+
+-- ── activity ──
+activityAll:
+SELECT * FROM activity ORDER BY createdAt DESC LIMIT ? OFFSET ?;
+upsertActivity:
+INSERT OR REPLACE INTO activity(id, entityType, entityId, action, actor, summary, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?);
+
+-- ── outbox ──
+enqueue:
+INSERT OR REPLACE INTO outbox(opId, entity, op, entityId, payload, updatedAt, attempts) VALUES (?, ?, ?, ?, ?, ?, 0);
+outboxPending:
+SELECT * FROM outbox ORDER BY updatedAt ASC;
+outboxCount:
+SELECT count(*) FROM outbox;
+dequeue:
+DELETE FROM outbox WHERE opId = ?;
+bumpAttempts:
+UPDATE outbox SET attempts = attempts + 1 WHERE opId = ?;
+
+-- ── maintenance ──
+clearAll {
+DELETE FROM project;
+DELETE FROM floorPlan;
+DELETE FROM location;
+DELETE FROM issue;
+DELETE FROM photo;
+DELETE FROM activity;
+DELETE FROM outbox;
+}

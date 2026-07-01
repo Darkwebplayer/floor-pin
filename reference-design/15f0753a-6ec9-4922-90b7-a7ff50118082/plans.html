@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FloorPin — Floor Plans</title>
+<link rel="stylesheet" href="assets/app.css">
+<style>
+  .plans-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--space-5); }
+  .plan-card { display: flex; flex-direction: column; overflow: hidden; cursor: pointer; text-align: left;
+    padding: 0; border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius-lg);
+    transition: box-shadow var(--motion-fast) var(--ease-standard), transform var(--motion-fast); }
+  .plan-card:hover { box-shadow: var(--elev-raised); transform: translateY(-2px); }
+  .plan-card .thumb { position: relative; aspect-ratio: 4 / 3; background: var(--surface-warm); overflow: hidden; border-bottom: 1px solid var(--border); }
+  .plan-card .thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .plan-card .thumb .open { position: absolute; right: 10px; bottom: 10px; background: var(--accent); color: #fff;
+    font-size: var(--text-xs); padding: 5px 10px; border-radius: var(--radius-sm); opacity: 0; transform: translateY(4px);
+    transition: opacity var(--motion-fast), transform var(--motion-fast); }
+  .plan-card:hover .thumb .open { opacity: 1; transform: translateY(0); }
+  .plan-card .body { padding: var(--space-4) var(--space-5) var(--space-5); display: flex; flex-direction: column; gap: 10px; flex: 1; }
+  .plan-card h3 { font-size: var(--text-lg); }
+  .plan-card .sub { font-size: var(--text-sm); color: var(--muted); }
+  .plan-card .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: auto; align-items: center; }
+  .plan-card .mini { font-size: var(--text-xs); color: var(--muted); font-feature-settings:"tnum"; }
+  .plan-card .mini b { color: var(--fg); font-weight: 400; }
+
+  .add-card { border: 1px dashed #b9b9f9; background: color-mix(in oklab,var(--accent),transparent 97%); align-items: center; justify-content: center;
+    color: var(--accent); gap: 10px; min-height: 220px; font-size: var(--text-sm); }
+  .add-card:hover { background: color-mix(in oklab,var(--accent),transparent 93%); box-shadow: none; }
+  .add-card .plus { width: 44px; height: 44px; border-radius: var(--radius-pill); background: var(--accent); color: #fff; display: grid; place-items: center; }
+  .add-card .plus svg { width: 22px; height: 22px; }
+
+  /* modal */
+  .modal-back { position: fixed; inset: 0; z-index: 80; background: rgba(6,27,49,.5); display: none; place-items: center; padding: var(--space-5); padding-bottom: calc(var(--space-5) + var(--kb, 0px)); overflow-y: auto; }
+  .modal-back.show { display: grid; }
+  .modal { width: 100%; max-width: 440px; background: #fff; border-radius: var(--radius-lg); box-shadow: var(--elev-raised); padding: var(--space-6); }
+  .modal h2 { font-size: var(--text-xl); margin-bottom: var(--space-2); }
+  .modal .lede { color: var(--muted); font-size: var(--text-sm); margin-bottom: var(--space-5); }
+  .drop { border: 1px dashed #362baa; border-radius: var(--radius-sm); padding: var(--space-5); text-align: center; color: var(--accent);
+    font-size: var(--text-sm); cursor: pointer; background: color-mix(in oklab,var(--accent),transparent 96%); }
+  .drop img { max-height: 120px; border-radius: var(--radius-sm); margin-top: 10px; display: block; margin-inline: auto; }
+  .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: var(--space-6); }
+</style>
+</head>
+<body data-page="plans">
+<div class="app" data-shell>
+  <main class="main">
+    <header class="topbar">
+      <div><div class="crumb">Workspace · <b>Northbridge FM</b></div><div class="title">Floor Plans</div></div>
+      <div class="grow"></div>
+      <input class="field" style="margin:0;max-width:240px" id="search" placeholder="Search plans…" autocomplete="off">
+      <button class="btn btn-primary" id="addBtn">
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <span class="lbl">Add floor plan</span>
+      </button>
+    </header>
+    <div class="content">
+      <div class="plans-grid" id="grid"></div>
+    </div>
+  </main>
+</div>
+
+<div class="modal-back" id="modalBack">
+  <div class="modal" role="dialog" aria-modal="true">
+    <h2>Add a floor plan</h2>
+    <p class="lede">Upload a plan image and give it a name. You can map locations and log defects right after.</p>
+    <div class="field"><label>Plan name</label><input id="mName" placeholder="e.g. Riverside Tower — Level 3"></div>
+    <div class="field"><label>Project / context</label><input id="mSub" placeholder="e.g. Handover snagging"></div>
+    <div class="field"><label>Floor plan image (PNG, JPG, WebP)</label>
+      <div class="drop" id="mDrop">
+        <span id="mDropText">Tap to upload a floor plan image</span>
+        <div id="mPreview"></div>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-neutral" id="mCancel">Cancel</button>
+      <button class="btn btn-primary" id="mCreate">Create &amp; open</button>
+    </div>
+  </div>
+</div>
+<input type="file" id="mFile" accept="image/png,image/jpeg,image/webp" hidden>
+
+<script src="assets/shell.js"></script>
+<script>
+(function(){
+  const $ = s => document.querySelector(s);
+  const esc = s => String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+  function open(id){ window.FloorPin.setLastPlan(id); location.href = "floorplan.html?plan=" + encodeURIComponent(id); }
+
+  function render(){
+    const q = ($("#search").value||"").toLowerCase();
+    const plans = window.FloorPin.plans().filter(p => (p.name+p.sub).toLowerCase().includes(q));
+    const grid = $("#grid");
+    grid.innerHTML = plans.map(p => {
+      const c = window.FloorPin.counts(p.id);
+      return `<button class="plan-card" data-id="${p.id}">
+        <div class="thumb"><img src="${esc(p.img)}" alt="${esc(p.name)}"><span class="open">Open inspection →</span></div>
+        <div class="body">
+          <div><h3>${esc(p.name)}</h3><div class="sub">${esc(p.sub||"—")}</div></div>
+          <div class="chips">
+            ${c.open ? `<span class="badge badge-open"><span class="dot"></span>${c.open} open</span>` : `<span class="badge badge-resolved"><span class="dot"></span>No open issues</span>`}
+            <span class="mini">· <b>${c.locations}</b> location${c.locations===1?"":"s"} · <b>${c.defects}</b> defect${c.defects===1?"":"s"}</span>
+          </div>
+        </div></button>`;
+    }).join("") + `<button class="plan-card add-card" id="addCard">
+        <span class="plus"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
+        Add a new floor plan</button>`;
+
+    grid.querySelectorAll(".plan-card[data-id]").forEach(b => b.onclick = () => open(b.dataset.id));
+    $("#addCard").onclick = showModal;
+  }
+  $("#search").oninput = render;
+
+  // ── add-plan modal ──
+  let pendingImg = null;
+  function showModal(){ $("#modalBack").classList.add("show"); $("#mName").focus(); }
+  function hideModal(){ $("#modalBack").classList.remove("show"); $("#mName").value=""; $("#mSub").value=""; pendingImg=null; $("#mPreview").innerHTML=""; $("#mDropText").style.display=""; }
+  $("#addBtn").onclick = showModal;
+  $("#mCancel").onclick = hideModal;
+  $("#modalBack").onclick = e => { if(e.target === $("#modalBack")) hideModal(); };
+  $("#mDrop").onclick = () => $("#mFile").click();
+  $("#mFile").onchange = e => {
+    const f = e.target.files[0]; if(!f) return;
+    const reader = new FileReader();
+    reader.onload = () => { pendingImg = reader.result; $("#mPreview").innerHTML = `<img src="${pendingImg}" alt="preview">`; $("#mDropText").style.display = "none"; };
+    reader.readAsDataURL(f);   // data URL persists across navigation
+  };
+  $("#mCreate").onclick = () => {
+    const name = $("#mName").value.trim();
+    if(!name){ $("#mName").focus(); return; }
+    const plan = window.FloorPin.addPlan({ name, sub:$("#mSub").value.trim(), img: pendingImg || "assets/floor-plan.webp" });
+    open(plan.id);
+  };
+
+  render();
+  if(location.hash === "#add") showModal();
+})();
+</script>
+</body>
+</html>

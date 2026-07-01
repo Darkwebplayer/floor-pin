@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FloorPin — Sign in</title>
+<link rel="stylesheet" href="assets/app.css">
+<style>
+  body { background: var(--bg); }
+  .login { display: grid; grid-template-columns: 1.05fr 1fr; min-height: 100vh; min-height: 100dvh; }
+
+  /* left: brand panel */
+  .promo { background: var(--fg); color: #fff; padding: 56px 60px; display: flex; flex-direction: column; position: relative; overflow: hidden; }
+  .promo::after { content:""; position:absolute; right:-160px; bottom:-160px; width:480px; height:480px; border-radius:50%;
+    background: radial-gradient(circle, color-mix(in oklab,var(--accent),transparent 50%), transparent 70%); }
+  .promo .brand { padding: 0; }
+  .promo .brand .name { font-size: var(--text-2xl); }
+  .promo h1 { color: #fff; font-size: var(--text-4xl); letter-spacing: -0.03em; margin: auto 0 var(--space-5); max-width: 12ch; }
+  .promo p { color: color-mix(in oklab,#fff,transparent 32%); font-size: var(--text-lg); font-weight: 300; max-width: 38ch; }
+  .promo .feats { display: flex; gap: var(--space-6); margin-top: var(--space-8); position: relative; z-index: 1; }
+  .promo .feats div { font-size: var(--text-sm); color: color-mix(in oklab,#fff,transparent 22%); }
+  .promo .feats b { display:block; font-family: var(--font-display); font-weight: 300; font-size: var(--text-2xl); color:#fff; font-feature-settings:"tnum"; }
+  .promo .mock { position:relative; z-index:1; margin-top: var(--space-8); border-radius: var(--radius-lg); overflow:hidden;
+    border: 1px solid color-mix(in oklab,#fff,transparent 86%); box-shadow: var(--elev-raised); }
+  .promo .mock img { display:block; width:100%; }
+
+  /* right: sign-in card */
+  .signin { display: grid; place-items: center; padding: var(--space-8); }
+  .signin-card { width: 100%; max-width: 380px; }
+  .signin-card .eyebrow { margin-bottom: var(--space-3); }
+  .signin-card h2 { font-size: var(--text-2xl); }
+  .signin-card .lede { color: var(--muted); font-size: var(--text-sm); margin: var(--space-2) 0 var(--space-8); }
+  .gbtn { display: flex; align-items: center; justify-content: center; gap: var(--space-3); width: 100%; min-height: 48px;
+    background: #fff; color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius-md); font-size: var(--text-base);
+    cursor: pointer; box-shadow: var(--elev-ambient); transition: box-shadow var(--motion-fast) var(--ease-standard), background var(--motion-fast); }
+  .gbtn:hover { box-shadow: var(--elev-raised); background: var(--surface-warm); }
+  .gbtn svg { width: 20px; height: 20px; }
+  .divider { display:flex; align-items:center; gap: var(--space-3); color: var(--muted); font-size: var(--text-xs); margin: var(--space-6) 0; }
+  .divider::before, .divider::after { content:""; height:1px; background: var(--border); flex:1; }
+  .legal { font-size: var(--text-xs); color: var(--muted); margin-top: var(--space-6); line-height: 1.5; }
+  .legal a { color: var(--accent); }
+  .badge-row { display:flex; gap:8px; margin-top: var(--space-5); }
+  @media (max-width: 860px){ .login{ grid-template-columns: 1fr; } .promo{ display:none; } }
+</style>
+</head>
+<body>
+<div class="login">
+  <section class="promo">
+    <a class="brand" href="#"><span class="logo"><svg viewBox="0 0 24 24"><path d="M12 21s7-6.3 7-11a7 7 0 1 0-14 0c0 4.7 7 11 7 11Z" fill="none" stroke="#fff" stroke-width="1.7"/><circle cx="12" cy="10" r="2.3" fill="#fff"/></svg></span><span class="name">Floor<b>Pin</b></span></a>
+    <h1>Inspections, pinned to the plan.</h1>
+    <p>Map locations, log defects with photo evidence, and export client-ready reports — all on top of your floor plan.</p>
+    <div class="feats">
+      <div><b>8×</b> faster snagging</div>
+      <div><b>100%</b> visual traceability</div>
+      <div><b>PDF</b> in one tap</div>
+    </div>
+    <div class="mock"><img src="assets/floor-plan.webp" alt="FloorPin floor plan preview"></div>
+  </section>
+
+  <section class="signin">
+    <div class="signin-card">
+      <span class="eyebrow">Welcome back</span>
+      <h2>Sign in to FloorPin</h2>
+      <p class="lede">Use your work Google account to access your projects and inspections.</p>
+
+      <button class="gbtn" id="googleBtn">
+        <svg viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5Z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65Z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19Z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48Z"/></svg>
+        Continue with Google
+      </button>
+
+      <div class="divider">secure single sign-on</div>
+      <button class="btn btn-neutral" style="width:100%;min-height:46px" id="ssoBtn">Use SSO / SAML</button>
+
+      <div class="badge-row">
+        <span class="badge"><span class="dot" style="background:var(--success)"></span>Role-based access</span>
+        <span class="badge"><span class="dot" style="background:var(--accent)"></span>Encrypted sessions</span>
+      </div>
+
+      <p class="legal">By continuing you agree to the <a href="#">Terms</a> and <a href="#">Privacy Policy</a>. Access is scoped to projects assigned by your administrator.</p>
+    </div>
+  </section>
+</div>
+<script>
+  const go = () => { location.href = "floorplan.html"; };
+  document.getElementById("googleBtn").onclick = go;
+  document.getElementById("ssoBtn").onclick = go;
+</script>
+</body>
+</html>

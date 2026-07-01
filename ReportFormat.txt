@@ -1,0 +1,41 @@
+Report Overview
+Report Title: Detailed Report — Snag Assure
+
+Property: Marquis Elegance, Unit 601
+
+Generated: 6/11/2026 at 6:47:56 PM (19 pages)
+
+Report Structure
+The report is organized by location/room, and within each room, individual snag items are listed sequentially.
+Locations Covered (Sections):
+
+Bedroom 1
+Balcony
+Bedroom 1 Balcony
+Bedroom 1 Bathroom
+Bedroom 2
+Bedroom 2 Bathroom
+Kitchen
+Living
+Main Entrance
+Powder Room
+Store Room
+
+
+Per-Item Snag Card Format
+Each snag entry contains the following fields:
+FieldDetailsSnag IDUnique number e.g. #575558Title/IssueShort description e.g. Paint cracksStatusOpen / ClosedCoordinatesX/Y position on floor plan e.g. x:932 / y:427Assigned Toe.g. DeveloperPriorityMedium / HighDue Datee.g. Sunday, June 21, 2026Days Remaininge.g. 11 daysCategorye.g. Architectural - Acoustic Walling / General observations - MEP-MechanicalTypee.g. General SnagLocationRoom nameCreated By / OnInspector name + date e.g. Shameem (Snag Assure) / 11/06/2026CostMonetary value (all showing 0 here)Notes/CommentsAdditional description (only on some items)
+
+Priority Levels Observed
+
+High — 2 items (Kitchen: Exposed loose cable, Water supply lines not working)
+Medium — All remaining items
+
+
+Key Observations on Format
+
+No summary/dashboard page — jumps straight into room-by-room snag details
+No photos are embedded in this version of the report
+No total count is shown at the top
+Consistent template — every snag uses the same card layout throughout
+Categorization is mostly uniform (Architectural - Acoustic Walling), with one exception in the MEP-Mechanical category

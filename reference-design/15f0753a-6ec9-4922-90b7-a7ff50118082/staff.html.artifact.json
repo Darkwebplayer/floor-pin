@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "kind": "html",
+  "title": "staff.html",
+  "entry": "staff.html",
+  "renderer": "html",
+  "status": "complete",
+  "exports": [
+    "html",
+    "pdf",
+    "zip"
+  ],
+  "createdAt": "2026-06-22T01:26:59.654Z",
+  "updatedAt": "2026-06-22T01:26:59.654Z",
+  "metadata": {
+    "inferred": true,
+    "reconciled": true
+  }
+}

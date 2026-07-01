@@ -1,0 +1,82 @@
+package dev.infyplus.floorpin.ui
+
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
+import androidx.activity.result.contract.ActivityResultContracts.TakePicture
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.FileProvider
+import dev.infyplus.floorpin.data.nowMillis
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
+import java.io.File
+
+private const val MAX_EDGE = 1600
+private const val JPEG_QUALITY = 80
+
+/** Decode → downscale longest edge to MAX_EDGE → JPEG. Keeps uploads small. */
+private fun processImage(raw: ByteArray): ByteArray {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(raw, 0, raw.size, bounds)
+    var sample = 1
+    val longest = maxOf(bounds.outWidth, bounds.outHeight)
+    while (longest / sample > MAX_EDGE * 2) sample *= 2
+    val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+    val bmp = BitmapFactory.decodeByteArray(raw, 0, raw.size, opts) ?: return raw
+    val scaled = run {
+        val edge = maxOf(bmp.width, bmp.height)
+        if (edge <= MAX_EDGE) bmp
+        else {
+            val r = MAX_EDGE.toFloat() / edge
+            Bitmap.createScaledBitmap(bmp, (bmp.width * r).toInt(), (bmp.height * r).toInt(), true)
+        }
+    }
+    return ByteArrayOutputStream().use { out ->
+        scaled.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
+        out.toByteArray()
+    }
+}
+
+@Composable
+actual fun rememberImagePicker(onImage: (bytes: ByteArray, fileName: String) -> Unit): () -> Unit {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val launcher = rememberLauncherForActivityResult(PickVisualMedia()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val bytes = withContext(Dispatchers.IO) {
+                context.contentResolver.openInputStream(uri)?.use { processImage(it.readBytes()) }
+            } ?: return@launch
+            onImage(bytes, "upload_${nowMillis()}.jpg")
+        }
+    }
+    return { launcher.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly)) }
+}
+
+@Composable
+actual fun rememberCameraCapture(onImage: (bytes: ByteArray, fileName: String) -> Unit): () -> Unit {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    // Reuse one temp file in cache; the camera app writes the full-res capture here.
+    val tempFile = remember { File(context.cacheDir, "camera_capture.jpg") }
+    val uri = remember {
+        FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", tempFile)
+    }
+    val launcher = rememberLauncherForActivityResult(TakePicture()) { ok ->
+        if (!ok) return@rememberLauncherForActivityResult
+        scope.launch {
+            val bytes = withContext(Dispatchers.IO) {
+                runCatching { processImage(tempFile.readBytes()) }.getOrNull()
+            } ?: return@launch
+            onImage(bytes, "capture_${nowMillis()}.jpg")
+        }
+    }
+    return { launcher.launch(uri) }
+}

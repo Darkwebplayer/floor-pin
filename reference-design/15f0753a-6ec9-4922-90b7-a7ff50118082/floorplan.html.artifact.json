@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "kind": "html",
+  "title": "floorplan.html",
+  "entry": "floorplan.html",
+  "renderer": "html",
+  "status": "complete",
+  "exports": [
+    "html",
+    "pdf",
+    "zip"
+  ],
+  "createdAt": "2026-06-22T01:28:35.510Z",
+  "updatedAt": "2026-06-22T01:28:35.510Z",
+  "metadata": {
+    "inferred": true,
+    "reconciled": true
+  }
+}

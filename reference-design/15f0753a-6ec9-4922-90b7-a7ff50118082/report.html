@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FloorPin — Inspection Report</title>
+<link rel="stylesheet" href="assets/app.css">
+<style>
+  .report-shell { display: grid; grid-template-columns: 1fr; gap: var(--space-6); max-width: 900px; margin: 0 auto; }
+  .sheet { background: #fff; border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--elev-ambient); padding: 56px 60px; }
+  .rep-head { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-6); padding-bottom: var(--space-6); border-bottom: 2px solid var(--fg); margin-bottom: var(--space-8); }
+  .rep-head .eyebrow { display:block; margin-bottom: 8px; }
+  .rep-head h1 { font-size: var(--text-3xl); letter-spacing: -0.03em; }
+  .rep-head .sub { color: var(--muted); font-size: var(--text-sm); margin-top: 8px; }
+  .rep-head .right { text-align: right; font-size: var(--text-sm); color: var(--fg-2); }
+  .rep-head .right .lg { display:inline-flex; align-items:center; gap:8px; font-family: var(--font-display); font-size: var(--text-xl); color: var(--fg); font-weight: 300; }
+  .rep-head .right .lg .logo { width:28px;height:28px;border-radius:6px;background:var(--accent);display:grid;place-items:center;}
+  .rep-head .right .lg .logo svg{width:15px;height:15px}
+
+  .summary { display: grid; grid-template-columns: repeat(4,1fr); gap: var(--space-4); margin-bottom: var(--space-8); }
+  .sbox { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4); }
+  .sbox .k { font-size: 11px; text-transform: uppercase; letter-spacing:.06em; color: var(--muted); font-family: var(--font-mono); }
+  .sbox .v { font-family: var(--font-display); font-weight: 300; font-size: var(--text-2xl); color: var(--fg); margin-top: 4px; font-feature-settings:"tnum"; }
+
+  .planrow { display: grid; grid-template-columns: 240px 1fr; gap: var(--space-6); align-items: center; margin-bottom: var(--space-8);
+    padding: var(--space-5); background: var(--surface-warm); border-radius: var(--radius-md); }
+  .planrow img { width: 100%; border-radius: var(--radius-sm); border: 1px solid var(--border); }
+  .planrow h2 { font-size: var(--text-xl); }
+
+  .loc-block { margin-bottom: var(--space-8); break-inside: avoid; }
+  .loc-title { display: flex; align-items: baseline; gap: var(--space-3); padding-bottom: 10px; border-bottom: 1px solid var(--border); margin-bottom: var(--space-4); }
+  .loc-title h3 { font-size: var(--text-xl); font-weight: 400; }
+  .loc-title .num { font-family: var(--font-mono); color: var(--accent); font-size: var(--text-sm); }
+
+  .issue { display: grid; grid-template-columns: 1fr 200px; gap: var(--space-5); padding: var(--space-4) 0; border-bottom: 1px dashed var(--border); break-inside: avoid; }
+  .issue:last-child { border-bottom: none; }
+  .issue h4 { font-family: var(--font-display); font-weight: 400; font-size: var(--text-base); color: var(--fg); }
+  .issue p { font-size: var(--text-sm); color: var(--fg-2); margin: 6px 0 0; }
+  .issue .meta { display: flex; gap: var(--space-3); align-items: center; margin-top: 10px; }
+  .issue .meta .date { font-size: var(--text-xs); color: var(--muted); font-feature-settings:"tnum"; }
+  .issue figure { margin: 0; }
+  .issue figure img { width: 100%; height: 134px; object-fit: cover; border-radius: var(--radius-sm); border: 1px solid var(--border); }
+  .issue figure figcaption { font-size: 11px; color: var(--muted); margin-top: 5px; text-align: center; }
+  .nophoto { width:100%;height:134px;border:1px dashed var(--border);border-radius:var(--radius-sm);display:grid;place-items:center;color:var(--muted);font-size:var(--text-xs); }
+
+  .rep-foot { margin-top: var(--space-12); padding-top: var(--space-5); border-top: 1px solid var(--border); display:flex; justify-content:space-between; font-size: var(--text-xs); color: var(--muted); }
+
+  .toolbar { position: sticky; top: 68px; z-index: 10; display:flex; justify-content:flex-end; gap: var(--space-3); max-width: 900px; margin: 0 auto var(--space-5); }
+
+  @media print {
+    .sidebar, .topbar, .toolbar { display: none !important; }
+    body { background: #fff; }
+    .app { display: block; }
+    .content { padding: 0; }
+    .sheet { border: none; box-shadow: none; border-radius: 0; padding: 0; max-width: none; }
+    @page { margin: 16mm; }
+  }
+  @media (max-width: 760px){ .summary{grid-template-columns:repeat(2,1fr)} .planrow{grid-template-columns:1fr} .issue{grid-template-columns:1fr} .sheet{padding:28px 22px} }
+</style>
+</head>
+<body data-page="report">
+<div class="app" data-shell>
+  <main class="main">
+    <header class="topbar">
+      <div><div class="crumb"><a href="floorplan.html">Lakeside Duplex</a> · <b>Report</b></div><div class="title">Inspection report</div></div>
+      <div class="grow"></div>
+      <button class="btn btn-neutral" id="shareBtn"><svg viewBox="0 0 24 24"><path d="M18 8a3 3 0 1 0-2.8-4M6 12a3 3 0 1 0 0 .01M18 19a3 3 0 1 0-2.8-2M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg><span class="lbl">Share</span></button>
+      <button class="btn btn-primary" id="pdfBtn"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 17v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="lbl">Export PDF</span></button>
+    </header>
+    <div class="content">
+
+      <div class="toolbar">
+        <span class="badge"><span class="dot" style="background:var(--success)"></span>Draft auto-saved</span>
+      </div>
+
+      <div class="report-shell">
+        <div class="sheet" id="sheet">
+          <div class="rep-head">
+            <div>
+              <span class="eyebrow">Defect inspection report</span>
+              <h1 id="repName">Floor plan</h1>
+              <div class="sub" id="repSub">Inspection report</div>
+            </div>
+            <div class="right">
+              <div class="lg"><span class="logo"><svg viewBox="0 0 24 24"><path d="M12 21s7-6.3 7-11a7 7 0 1 0-14 0c0 4.7 7 11 7 11Z" fill="none" stroke="#fff" stroke-width="1.7"/><circle cx="12" cy="10" r="2.3" fill="#fff"/></svg></span>FloorPin</div>
+              <div style="margin-top:14px">Inspector: <b style="color:var(--fg);font-weight:400">Aisha Malik</b></div>
+              <div class="tnum">Issued 22 Jun 2026</div>
+            </div>
+          </div>
+
+          <div class="summary">
+            <div class="sbox"><div class="k">Locations</div><div class="v tnum" id="sLoc">—</div></div>
+            <div class="sbox"><div class="k">Total defects</div><div class="v tnum" id="sDef">—</div></div>
+            <div class="sbox"><div class="k">Open</div><div class="v tnum" id="sOpen" style="color:var(--danger)">—</div></div>
+            <div class="sbox"><div class="k">Resolved</div><div class="v tnum" id="sRes" style="color:var(--success)">—</div></div>
+          </div>
+
+          <div class="planrow">
+            <img id="repThumb" src="assets/floor-plan.webp" alt="Floor plan">
+            <div>
+              <h2 id="repPlanH">Floor plan</h2>
+              <p class="muted" style="font-size:var(--text-sm);margin:8px 0 0">All defects below are mapped to location markers on the plan. Pins are colour-coded by status: open, in&nbsp;progress, resolved.</p>
+            </div>
+          </div>
+
+          <div id="report"></div>
+
+          <div class="rep-foot">
+            <span>FloorPin · Defect management &amp; inspection</span>
+            <span class="tnum">Page 1 · Generated 22 Jun 2026 14:08</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+<script src="assets/shell.js"></script>
+<script>
+(function(){
+  // Report reflects the currently-open plan from the shared store.
+  const FP = window.FloorPin;
+  const planId = FP.lastPlan();
+  const plan = FP.plan(planId) || { name:"Floor plan", sub:"", img:"assets/floor-plan.webp" };
+  const allLocs = FP.locations(planId);
+  const data = allLocs.filter(l => l.defects.length);
+
+  const esc = s => String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const badge = { open:["badge-open","Open"], progress:["badge-progress","In progress"], resolved:["badge-resolved","Resolved"] };
+
+  // header + summary, computed from the live data
+  document.getElementById("repName").textContent = plan.name;
+  document.getElementById("repSub").textContent = plan.sub || "Defect inspection report";
+  document.getElementById("repThumb").src = plan.img;
+  document.getElementById("repPlanH").textContent = plan.name;
+  let totDef = 0, totOpen = 0, totRes = 0;
+  data.forEach(l => l.defects.forEach(d => { totDef++; if(d.status==="open") totOpen++; if(d.status==="resolved") totRes++; }));
+  document.getElementById("sLoc").textContent = allLocs.length;
+  document.getElementById("sDef").textContent = totDef;
+  document.getElementById("sOpen").textContent = totOpen;
+  document.getElementById("sRes").textContent = totRes;
+  if(!data.length) document.getElementById("report").innerHTML = '<p class="muted" style="padding:var(--space-8) 0">No defects logged for this plan yet.</p>';
+
+  if(data.length) document.getElementById("report").innerHTML = data.map((loc,i) => `
+    <div class="loc-block">
+      <div class="loc-title"><span class="num tnum">${String(i+1).padStart(2,"0")}</span><h3>${esc(loc.name)}</h3></div>
+      ${loc.defects.map(d => {
+        const [cls,label] = badge[d.status] || badge.open;
+        return `<div class="issue">
+          <div>
+            <h4>${esc(d.title)}</h4>
+            <p>${esc(d.desc)}</p>
+            <div class="meta"><span class="badge ${cls}"><span class="dot"></span>${label}</span><span class="date tnum">${esc(d.date)}</span></div>
+          </div>
+          <figure>
+            ${d.photo ? `<img src="${d.photo}" alt="${esc(d.title)} evidence"><figcaption>Photo evidence</figcaption>`
+                      : `<div class="nophoto">No photo attached</div>`}
+          </figure>
+        </div>`;
+      }).join("")}
+    </div>`).join("");
+
+  document.getElementById("pdfBtn").onclick = () => window.print();
+  document.getElementById("shareBtn").onclick = () => {
+    const url = location.href;
+    if(navigator.share){ navigator.share({title:"FloorPin inspection report", url}).catch(()=>{}); }
+    else { navigator.clipboard?.writeText(url); document.getElementById("shareBtn").lastChild.textContent = "Link copied"; }
+  };
+})();
+</script>
+</body>
+</html>
