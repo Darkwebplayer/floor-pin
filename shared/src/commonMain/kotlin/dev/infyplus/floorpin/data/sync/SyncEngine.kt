@@ -4,6 +4,7 @@ import dev.infyplus.floorpin.data.db.AppJson
 import dev.infyplus.floorpin.data.remote.ApiService
 import dev.infyplus.floorpin.data.remote.SyncOp
 import dev.infyplus.floorpin.data.repo.DataStore
+import io.ktor.http.isSuccess
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -15,6 +16,10 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonObject
 
 enum class SyncState { Idle, Syncing, Offline }
+
+// How many times the server may reject an op before we drop it, so one poison op can't
+// block the queue forever. Only server rejections count — being offline never does.
+private const val MAX_ATTEMPTS = 5
 
 /**
  * Pushes queued offline writes to POST /api/sync. The pull/reconcile direction
@@ -57,14 +62,27 @@ class SyncEngine(
                 SyncOp(it.entity, it.op, it.entityId, AppJson.decodeFromString(JsonObject.serializer(), it.payload), it.updatedAt)
             }
             runCatching { api.sync(ops) }
-                .onSuccess {
-                    // Server processed the batch (applied / stale / missing all terminal) — drop them.
-                    data.q.transaction { queued.forEach { data.q.dequeue(it.opId) } }
-                    _pending.value = 0
-                    _state.value = SyncState.Idle
+                .onSuccess { status ->
+                    if (status.isSuccess()) {
+                        // Server processed the batch (applied / stale / missing all terminal) — drop them.
+                        data.q.transaction { queued.forEach { data.q.dequeue(it.opId) } }
+                        _pending.value = 0
+                        _state.value = SyncState.Idle
+                    } else {
+                        // Server reached but rejected the batch. Count it; drop ops that have exhausted
+                        // their retries so a permanently-rejected op can't block everything behind it.
+                        data.q.transaction {
+                            queued.forEach {
+                                if (it.attempts + 1 >= MAX_ATTEMPTS) data.q.dequeue(it.opId)
+                                else data.q.bumpAttempts(it.opId)
+                            }
+                        }
+                        _pending.value = data.q.outboxCount().executeAsOne()
+                        _state.value = SyncState.Offline
+                    }
                 }
                 .onFailure {
-                    queued.forEach { data.q.bumpAttempts(it.opId) }
+                    // Network unreachable — retry indefinitely without counting attempts (offline-first).
                     _state.value = SyncState.Offline
                 }
         }

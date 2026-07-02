@@ -1,0 +1,2 @@
+-- v2 → v3: add item field to issues.
+ALTER TABLE issue ADD COLUMN item TEXT;

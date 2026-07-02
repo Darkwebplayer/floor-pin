@@ -20,6 +20,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -42,6 +43,7 @@ import dev.infyplus.floorpin.ui.components.AppIcons
 import dev.infyplus.floorpin.ui.components.AppTextField
 import dev.infyplus.floorpin.ui.components.ButtonVariant
 import dev.infyplus.floorpin.ui.components.StatusBadge
+import dev.infyplus.floorpin.ui.components.rememberPhotoMarker
 import dev.infyplus.floorpin.ui.rememberCameraCapture
 import dev.infyplus.floorpin.ui.rememberImagePicker
 import dev.infyplus.floorpin.ui.theme.Accent
@@ -115,9 +117,18 @@ private fun LocationDetail(vm: ViewerViewModel, location: Location, issues: List
     var showAdd by remember { mutableStateOf(false) }
     var tab by remember(location.id) { mutableStateOf(0) }
 
+    // Commit the name once, when this pin's inspector closes (Done, tap-away, or switching pins) —
+    // not on every keystroke. Only writes if the name actually changed.
+    DisposableEffect(location.id) {
+        onDispose {
+            val trimmed = name.ifBlank { "Untitled" }
+            if (trimmed != location.name) vm.renameLocation(location.id, trimmed)
+        }
+    }
+
     Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
-        Text(location.name, style = MaterialTheme.typography.headlineMedium, color = Ink)
-        AppTextField(name, { name = it; vm.renameLocation(location.id, it.ifBlank { "Untitled" }) }, label = "Location name", modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp))
+        Text(name, style = MaterialTheme.typography.headlineMedium, color = Ink)
+        AppTextField(name, { name = it }, label = "Location name", modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 12.dp)) {
             Chip("Issues (${issues.size})", tab == 0) { tab = 0 }
             Chip("Activity", tab == 1) { tab = 1 }
@@ -141,10 +152,9 @@ private fun LocationDetail(vm: ViewerViewModel, location: Location, issues: List
     if (showAdd) {
         AddIssueDialog(
             onDismiss = { showAdd = false },
-            onCreate = { title, desc, status, priority, type, category, photoBytes, photoName ->
+            onCreate = { title, desc, status, priority, type, category, item, photoBytes, photoName ->
                 showAdd = false
-                // No explicit placement here — default the issue pin to the location's spot.
-                vm.addIssueWithPhoto(location.id, title, desc, status, priority, type, category, location.x, location.y, photoBytes, photoName)
+                vm.addIssueWithPhoto(location.id, title, desc, status, priority, type, category, item, location.x, location.y, photoBytes, photoName)
             },
         )
     }
@@ -208,8 +218,17 @@ private fun IssueCard(issue: Issue, onClick: () -> Unit) {
 @Composable
 private fun IssueDetail(vm: ViewerViewModel, location: Location, issue: Issue, onBack: () -> Unit) {
     val photos by remember(issue.id) { vm.observePhotos(issue.id) }.collectAsStateWithLifecycle(emptyList())
-    val pick = rememberImagePicker { bytes, name -> vm.uploadPhoto(issue.id, bytes, name) }
-    val capture = rememberCameraCapture { bytes, name -> vm.uploadPhoto(issue.id, bytes, name) }
+    val annotate = rememberPhotoMarker()
+    val pick = rememberImagePicker { bytes, name ->
+        annotate(bytes, name) { result ->
+            if (result != null) vm.uploadPhoto(issue.id, result.bytes, result.fileName)
+        }
+    }
+    val capture = rememberCameraCapture { bytes, name ->
+        annotate(bytes, name) { result ->
+            if (result != null) vm.uploadPhoto(issue.id, result.bytes, result.fileName)
+        }
+    }
 
     Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
         AppButton(location.name, onClick = onBack, small = true, variant = ButtonVariant.Neutral, leadingIcon = AppIcons.ChevronLeft)
@@ -276,19 +295,29 @@ private fun Chip(label: String, on: Boolean, onClick: () -> Unit) {
 @Composable
 internal fun AddIssueDialog(
     onDismiss: () -> Unit,
-    onCreate: (title: String, desc: String?, status: IssueStatus, priority: IssuePriority, type: String?, category: String?, photoBytes: ByteArray?, photoName: String?) -> Unit,
+    onCreate: (title: String, desc: String?, status: IssueStatus, priority: IssuePriority, type: String?, category: String?, item: String?, photoBytes: ByteArray?, photoName: String?) -> Unit,
 ) {
     var step by remember { mutableStateOf(0) }
     var title by remember { mutableStateOf("") }
     var desc by remember { mutableStateOf("") }
-    var type by remember { mutableStateOf("") }
-    var category by remember { mutableStateOf("") }
+    var type by remember { mutableStateOf("Architectural") }
+    var category by remember { mutableStateOf("Architectural") }
+    var item by remember { mutableStateOf("General Snag") }
     var status by remember { mutableStateOf(IssueStatus.OPEN) }
     var priority by remember { mutableStateOf(IssuePriority.MEDIUM) }
     var photoBytes by remember { mutableStateOf<ByteArray?>(null) }
     var photoName by remember { mutableStateOf<String?>(null) }
-    val pickGallery = rememberImagePicker { bytes, name -> photoBytes = bytes; photoName = name }
-    val takePhoto = rememberCameraCapture { bytes, name -> photoBytes = bytes; photoName = name }
+    val annotate = rememberPhotoMarker()
+    val pickGallery = rememberImagePicker { bytes, name ->
+        annotate(bytes, name) { result ->
+            if (result != null) { photoBytes = result.bytes; photoName = result.fileName }
+        }
+    }
+    val takePhoto = rememberCameraCapture { bytes, name ->
+        annotate(bytes, name) { result ->
+            if (result != null) { photoBytes = result.bytes; photoName = result.fileName }
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -300,6 +329,7 @@ internal fun AddIssueDialog(
                     AppTextField(desc, { desc = it }, label = "Description", placeholder = "What's wrong…", singleLine = false)
                     AppTextField(type, { type = it }, label = "Type", placeholder = "e.g. Plumbing")
                     AppTextField(category, { category = it }, label = "Category", placeholder = "e.g. Snagging")
+                    AppTextField(item, { item = it }, label = "Item", placeholder = "e.g. General Snag")
                     Text("Status", style = MaterialTheme.typography.bodySmall, color = Muted)
                     StatusChips(status) { status = it }
                     Text("Priority", style = MaterialTheme.typography.bodySmall, color = Muted)
@@ -328,7 +358,7 @@ internal fun AddIssueDialog(
                 AppButton("Next", onClick = { if (title.isNotBlank()) step = 1 })
             } else {
                 AppButton("Save issue", onClick = {
-                    onCreate(title.trim(), desc.trim().ifBlank { null }, status, priority, type.trim().ifBlank { null }, category.trim().ifBlank { null }, photoBytes, photoName)
+                    onCreate(title.trim(), desc.trim().ifBlank { null }, status, priority, type.trim().ifBlank { null }, category.trim().ifBlank { null }, item.trim().ifBlank { null }, photoBytes, photoName)
                 })
             }
         },

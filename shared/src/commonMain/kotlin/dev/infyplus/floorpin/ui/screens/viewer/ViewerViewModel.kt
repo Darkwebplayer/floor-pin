@@ -45,7 +45,7 @@ class ViewerViewModel(
             val locs = dto.locations ?: emptyList()
             container.data.locations.upsertFromServer(locs.map { it.toRow(floorPlanId) })
             locs.forEach { loc ->
-                runCatching { container.api.issues(loc.id) }.onSuccess { list ->
+                loc.issues?.let { list ->
                     container.data.issues.upsertFromServer(list.map { it.toRow() })
                     list.forEach { i -> i.photos?.let { ph -> container.data.issues.upsertPhotos(ph.map { it.toRow() }) } }
                 }
@@ -73,15 +73,15 @@ class ViewerViewModel(
     }
 
     // ── issue writes ──
-    fun addIssue(locationId: String, title: String, desc: String?, status: IssueStatus, priority: IssuePriority, type: String? = null, category: String? = null, x: Double? = null, y: Double? = null): Issue =
-        container.data.issues.create(locationId, title, desc, status, priority, type, category, x, y).also { container.sync.requestSync() }
+    fun addIssue(locationId: String, title: String, desc: String?, status: IssueStatus, priority: IssuePriority, type: String? = null, category: String? = null, item: String? = null, x: Double? = null, y: Double? = null): Issue =
+        container.data.issues.create(locationId, title, desc, status, priority, type, category, item, x, y).also { container.sync.requestSync() }
 
     /** Create the issue (offline-ok) then upload an optional photo (online-only, separate endpoint). */
     fun addIssueWithPhoto(
         locationId: String, title: String, desc: String?, status: IssueStatus, priority: IssuePriority,
-        type: String?, category: String?, x: Double?, y: Double?, photoBytes: ByteArray?, photoName: String?,
+        type: String?, category: String?, item: String?, x: Double?, y: Double?, photoBytes: ByteArray?, photoName: String?,
     ) {
-        val issue = addIssue(locationId, title, desc, status, priority, type, category, x, y)
+        val issue = addIssue(locationId, title, desc, status, priority, type, category, item, x, y)
         if (photoBytes != null && photoName != null) uploadPhoto(issue.id, photoBytes, photoName)
     }
     fun setIssueStatus(id: String, status: IssueStatus) {

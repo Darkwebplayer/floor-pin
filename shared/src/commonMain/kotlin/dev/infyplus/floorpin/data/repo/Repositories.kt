@@ -23,8 +23,31 @@ import kotlinx.serialization.json.put
 /** Wraps the outbox queue so writes record a replayable op for POST /api/sync. */
 class Outbox(private val q: FloorpinQueries) {
     fun enqueue(entity: String, op: String, entityId: String, data: JsonObject, updatedAt: Long) {
-        q.enqueue(newId(), entity, op, entityId, dev.infyplus.floorpin.data.db.AppJson.encodeToString(JsonObject.serializer(), data), updatedAt)
+        // Coalesce: fold any pending "update" ops for the same entity into a single op (merging
+        // fields, newest wins), so rapid edits/drags don't grow the queue unbounded.
+        if (op == "update") {
+            val pending = q.outboxUpdatesFor(entity, entityId).executeAsList()
+            if (pending.isNotEmpty()) {
+                val merged = buildJsonObject {
+                    pending.forEach { row ->
+                        decode(row.payload).forEach { (k, v) -> put(k, v) }
+                    }
+                    data.forEach { (k, v) -> put(k, v) }
+                }
+                q.transaction {
+                    pending.forEach { q.dequeue(it.opId) }
+                    q.enqueue(newId(), entity, op, entityId, encode(merged), updatedAt)
+                }
+                return
+            }
+        }
+        q.enqueue(newId(), entity, op, entityId, encode(data), updatedAt)
     }
+
+    private fun encode(data: JsonObject) =
+        dev.infyplus.floorpin.data.db.AppJson.encodeToString(JsonObject.serializer(), data)
+    private fun decode(payload: String) =
+        dev.infyplus.floorpin.data.db.AppJson.decodeFromString(JsonObject.serializer(), payload)
 }
 
 class ProjectRepo(private val q: FloorpinQueries) {
@@ -91,15 +114,16 @@ class IssueRepo(private val q: FloorpinQueries, private val outbox: Outbox) {
     fun observePhotosByFloorPlan(floorPlanId: String): Flow<List<Photo>> =
         q.photosByFloorPlan(floorPlanId).asFlow().mapToList(Dispatchers.Default)
 
-    fun create(locationId: String, title: String, description: String?, status: IssueStatus, priority: IssuePriority, type: String? = null, category: String? = null, x: Double? = null, y: Double? = null): Issue {
+    fun create(locationId: String, title: String, description: String?, status: IssueStatus, priority: IssuePriority, type: String? = null, category: String? = null, item: String? = null, x: Double? = null, y: Double? = null): Issue {
         val now = nowMillis()
-        val issue = Issue(newId(), locationId, title, description, status.wire, priority.wire, type, x, y, now, now, null, category, null)
-        q.upsertIssue(issue.id, issue.locationId, issue.title, issue.description, issue.status, issue.priority, issue.type, issue.x, issue.y, issue.createdAt, issue.updatedAt, issue.resolvedAt, issue.category, issue.assignedTo)
+        val issue = Issue(newId(), locationId, title, description, status.wire, priority.wire, type, x, y, now, now, null, category, item, null)
+        q.upsertIssue(issue.id, issue.locationId, issue.title, issue.description, issue.status, issue.priority, issue.type, issue.x, issue.y, issue.createdAt, issue.updatedAt, issue.resolvedAt, issue.category, issue.item, issue.assignedTo)
         outbox.enqueue("issues", "create", issue.id, buildJsonObject {
             put("locationId", locationId); put("title", title)
             put("description", description ?: ""); put("status", status.wire); put("priority", priority.wire)
             if (type != null) put("type", type)
             if (category != null) put("category", category)
+            if (item != null) put("item", item)
             if (x != null) put("x", x)
             if (y != null) put("y", y)
         }, now)
@@ -121,7 +145,7 @@ class IssueRepo(private val q: FloorpinQueries, private val outbox: Outbox) {
         outbox.enqueue("issues", "delete", id, JsonObject(emptyMap()), nowMillis())
     }
     fun upsertFromServer(issues: List<Issue>) = q.transaction {
-        issues.forEach { q.upsertIssue(it.id, it.locationId, it.title, it.description, it.status, it.priority, it.type, it.x, it.y, it.createdAt, it.updatedAt, it.resolvedAt, it.category, it.assignedTo) }
+        issues.forEach { q.upsertIssue(it.id, it.locationId, it.title, it.description, it.status, it.priority, it.type, it.x, it.y, it.createdAt, it.updatedAt, it.resolvedAt, it.category, it.item, it.assignedTo) }
     }
     fun upsertPhotos(photos: List<Photo>) = q.transaction {
         photos.forEach { q.upsertPhoto(it.id, it.issueId, it.imageKey, it.imageUrl, it.createdAt, it.caption) }

@@ -77,4 +77,10 @@ object AppIcons {
         IconPart("M18 14v6M15 17h6"),
     )
     val FitScreen = svgIcon(IconPart("M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"), strokeWidth = 1.8f)
+    val Check = svgIcon(IconPart("M5 13l4 4L19 7"), strokeWidth = 2f)
+    val Undo = svgIcon(
+        IconPart("M9 14 4 9l5-5"),
+        IconPart("M4 9h10.5a5.5 5.5 0 0 1 0 11H12"),
+        strokeWidth = 1.8f,
+    )
 }

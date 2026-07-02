@@ -21,6 +21,7 @@ data class ProjectDto(
     val description: String? = null,
     val createdAt: String? = null,
     val updatedAt: String? = null,
+    val issues: List<IssueDto>? = null,
 )
 
 @Serializable
@@ -45,6 +46,7 @@ data class LocationDto(
     val y: Double = 50.0,
     val createdAt: String? = null,
     val updatedAt: String? = null,
+    val issues: List<IssueDto>? = null,
 )
 
 @Serializable
@@ -57,6 +59,7 @@ data class IssueDto(
     val priority: String? = null,
     val type: String? = null,
     val category: String? = null,
+    val item: String? = null,
     val assignedTo: String? = null,
     val x: Double? = null,
     val y: Double? = null,
@@ -133,5 +136,5 @@ data class AllowlistEntry(val email: String, val role: String = "staff")
 fun ProjectDto.toRow() = Project(id, name, description, parseIso(createdAt), parseIso(updatedAt))
 fun FloorPlanDto.toRow() = FloorPlan(id, projectId, name, null, imageKey, null, parseIso(createdAt), parseIso(updatedAt), width, height)
 fun LocationDto.toRow(planId: String) = Location(id, floorPlanId ?: planId, label ?: "Location", x, y, parseIso(updatedAt), parseIso(createdAt))
-fun IssueDto.toRow() = Issue(id, locationId ?: "", title, description, status, priority, type, x, y, parseIso(createdAt), parseIso(updatedAt), if (resolvedAt != null) parseIso(resolvedAt) else null, category, assignedTo)
+fun IssueDto.toRow() = Issue(id, locationId ?: "", title, description, status, priority, type, x, y, parseIso(createdAt), parseIso(updatedAt), if (resolvedAt != null) parseIso(resolvedAt) else null, category, item, assignedTo)
 fun PhotoDto.toRow() = Photo(id, issueId ?: "", imageKey, null, parseIso(createdAt), caption)

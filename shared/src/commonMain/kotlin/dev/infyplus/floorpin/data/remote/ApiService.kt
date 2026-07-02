@@ -20,6 +20,7 @@ import io.ktor.client.statement.HttpResponse
 import io.ktor.http.ContentType
 import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.PartData
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
@@ -104,11 +105,13 @@ class ApiService(private val client: HttpClient) {
         client.get("$BASE/api/activity/entity/$type/$id").body()
 
     // ── sync ──
-    suspend fun sync(ops: List<SyncOp>): SyncResponse =
+    // Returns the HTTP status only — per-op results (applied/stale/missing) are all terminal, so the
+    // engine dequeues on 2xx regardless. A non-2xx status tells the engine the server rejected the batch.
+    suspend fun sync(ops: List<SyncOp>): HttpStatusCode =
         client.post("$BASE/api/sync") {
             contentType(ContentType.Application.Json)
             setBody(SyncRequest(ops))
-        }.body()
+        }.status
 
     // ── admin ──
     suspend fun users(): List<UserDto> = client.get("$BASE/api/admin/users").body<ListUsersResponse>().users

@@ -209,8 +209,8 @@ fun ViewerScreen(
         addIssueTarget?.let { (locId, ix, iy) ->
             AddIssueDialog(
                 onDismiss = { addIssueTarget = null },
-                onCreate = { title, desc, status, priority, type, category, photoBytes, photoName ->
-                    vm.addIssueWithPhoto(locId, title, desc, status, priority, type, category, ix, iy, photoBytes, photoName)
+                onCreate = { title, desc, status, priority, type, category, item, photoBytes, photoName ->
+                    vm.addIssueWithPhoto(locId, title, desc, status, priority, type, category, item, ix, iy, photoBytes, photoName)
                     addIssueTarget = null
                 },
             )
@@ -317,7 +317,8 @@ private fun PlanCanvas(
                     invScale = 1f / scale,
                     draggable = mode == ViewerMode.Move,
                     onClick = { onTapLocation(loc.id) },
-                    onDrag = { dxPx, dyPx ->
+                    // fired once on drag-end with the total screen-px delta — one write, one sync
+                    onDragEnd = { dxPx, dyPx ->
                         val nx = (loc.x + dxPx / scale / baseW * 100).coerceIn(1.0, 99.0)
                         val ny = (loc.y + dyPx / scale / baseH * 100).coerceIn(1.0, 99.0)
                         onMoveLocation(loc.id, nx, ny)
@@ -336,7 +337,7 @@ private fun PlanCanvas(
                     invScale = 1f / scale,
                     draggable = mode == ViewerMode.Move,
                     onClick = { onTapIssue(issue.id, issue.locationId) },
-                    onDrag = { dxPx, dyPx ->
+                    onDragEnd = { dxPx, dyPx ->
                         val nx = (ix + dxPx / scale / baseW * 100).coerceIn(1.0, 99.0)
                         val ny = (iy + dyPx / scale / baseH * 100).coerceIn(1.0, 99.0)
                         onMoveIssue(issue.id, nx, ny)
@@ -366,18 +367,27 @@ private fun PinMarker(
     invScale: Float,
     draggable: Boolean,
     onClick: () -> Unit,
-    onDrag: (Float, Float) -> Unit,
+    onDragEnd: (Float, Float) -> Unit,
 ) {
+    val density = LocalDensity.current
+    // live drag offset (screen px), applied locally for smooth motion; committed once on release
+    var dragPx by remember(loc.id, draggable) { mutableStateOf(Offset.Zero) }
     val xDp = baseWDp * (loc.x.toFloat() / 100f)
     val yDp = baseHDp * (loc.y.toFloat() / 100f)
     Box(
         Modifier
-            .offset(x = xDp - 15.dp, y = yDp - 36.dp)
+            .offset(
+                x = xDp - 15.dp + with(density) { (dragPx.x * invScale).toDp() },
+                y = yDp - 36.dp + with(density) { (dragPx.y * invScale).toDp() },
+            )
             .graphicsLayer { scaleX = invScale; scaleY = invScale; transformOrigin = TransformOrigin(0.5f, 1f) }
             .size(width = 30.dp, height = 36.dp)
             .then(
                 if (draggable) Modifier.pointerInput(loc.id) {
-                    detectDragGestures { change, drag -> change.consume(); onDrag(drag.x, drag.y) }
+                    detectDragGestures(
+                        onDragEnd = { onDragEnd(dragPx.x, dragPx.y); dragPx = Offset.Zero },
+                        onDragCancel = { dragPx = Offset.Zero },
+                    ) { change, drag -> change.consume(); dragPx += drag }
                 } else Modifier.pointerInput(loc.id) { detectTapGestures { onClick() } },
         ),
         contentAlignment = Alignment.TopCenter,
@@ -405,6 +415,18 @@ private fun PinMarker(
                 Text("$count", color = White, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
             }
         }
+        // name label under the pin tip (overflows the 30dp box, centered on it)
+        Box(Modifier.offset(y = 38.dp).width(120.dp), contentAlignment = Alignment.TopCenter) {
+            Surface(color = White.copy(alpha = 0.9f), shape = RoundedCornerShape(4.dp)) {
+                Text(
+                    loc.name,
+                    color = Ink,
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+                )
+            }
+        }
     }
 }
 
@@ -417,16 +439,24 @@ private fun IssueDot(
     invScale: Float,
     draggable: Boolean,
     onClick: () -> Unit,
-    onDrag: (Float, Float) -> Unit,
+    onDragEnd: (Float, Float) -> Unit,
 ) {
+    val density = LocalDensity.current
+    var dragPx by remember(id, draggable) { mutableStateOf(Offset.Zero) }
     Box(
         Modifier
-            .offset(x = xDp - 7.dp, y = yDp - 7.dp)
+            .offset(
+                x = xDp - 7.dp + with(density) { (dragPx.x * invScale).toDp() },
+                y = yDp - 7.dp + with(density) { (dragPx.y * invScale).toDp() },
+            )
             .graphicsLayer { scaleX = invScale; scaleY = invScale; transformOrigin = TransformOrigin(0.5f, 0.5f) }
             .size(14.dp)
             .then(
                 if (draggable) Modifier.pointerInput(id) {
-                    detectDragGestures { change, drag -> change.consume(); onDrag(drag.x, drag.y) }
+                    detectDragGestures(
+                        onDragEnd = { onDragEnd(dragPx.x, dragPx.y); dragPx = Offset.Zero },
+                        onDragCancel = { dragPx = Offset.Zero },
+                    ) { change, drag -> change.consume(); dragPx += drag }
                 } else Modifier.pointerInput(id) { detectTapGestures { onClick() } }
             )
             .background(color, CircleShape)

@@ -4,4 +4,4 @@ import androidx.compose.runtime.Composable
 
 /** Returns a function that renders the given HTML to the platform's print/PDF flow. */
 @Composable
-expect fun rememberReportExporter(): (html: String, jobName: String) -> Unit
+expect fun rememberReportExporter(): (html: String, jobName: String, baseUrl: String) -> Unit

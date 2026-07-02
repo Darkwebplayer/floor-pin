@@ -22,6 +22,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,6 +52,11 @@ import dev.infyplus.floorpin.ui.theme.Muted
 import dev.infyplus.floorpin.ui.theme.Success
 import dev.infyplus.floorpin.ui.theme.SurfaceWarm
 import dev.infyplus.floorpin.ui.theme.White
+import io.ktor.client.call.body
+import io.ktor.client.request.get
+import kotlinx.coroutines.launch
+import kotlin.io.encoding.Base64
+import kotlin.io.encoding.ExperimentalEncodingApi
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
@@ -76,11 +82,14 @@ fun ReportScreen(container: AppContainer, floorPlanId: String, onBack: () -> Uni
 
     val exporter = rememberReportExporter()
     val planName = floorPlan?.name ?: "Floor plan"
+    val scope = rememberCoroutineScope()
 
     Column(Modifier.fillMaxSize().background(SurfaceWarm)) {
         AppTopBar(title = "Inspection report", crumb = planName, onBack = onBack) {
             AppButton("Export PDF", onClick = {
-                exporter(buildReportHtml(planName, withIssues, issuesByLoc, locations.size, total, open, resolved), "FloorPin — $planName")
+                scope.launch {
+                    exportPdf(container, exporter, floorPlan, planName, withIssues, issuesByLoc, photosByIssue, locations.size, total, open, resolved)
+                }
             }, small = true, leadingIcon = AppIcons.Download)
         }
         LazyColumn(
@@ -157,10 +166,53 @@ private fun ReportIssueRow(issue: Issue, photos: List<Photo>) {
 
 private fun esc(s: String?): String = (s ?: "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-private fun buildReportHtml(
+@OptIn(ExperimentalEncodingApi::class)
+private suspend fun exportPdf(
+    container: AppContainer,
+    exporter: (String, String, String) -> Unit,
+    floorPlan: FloorPlan?,
     planName: String,
     withIssues: List<Location>,
     issuesByLoc: Map<String, List<Issue>>,
+    photosByIssue: Map<String, List<Photo>>,
+    locationCount: Int,
+    total: Int,
+    open: Int,
+    resolved: Int,
+) {
+    val seen = mutableSetOf<String>()
+    floorPlan?.let { floorPlanImageUrl(it) }?.let { seen.add(it) }
+    for (loc in withIssues) {
+        for (issue in issuesByLoc[loc.id] ?: emptyList()) {
+            photosByIssue[issue.id]?.firstOrNull()?.imageKey?.let { key ->
+                seen.add("${Config.BASE_URL}/files/$key")
+            }
+        }
+    }
+
+    val dataUris = mutableMapOf<String, String>()
+    for (url in seen) {
+        try {
+            val bytes: ByteArray = container.http.get(url).body()
+            dataUris[url] = "data:image/*;base64,${Base64.encode(bytes)}"
+        } catch (_: Exception) { }
+    }
+
+    val planImageUrl = floorPlan?.let { floorPlanImageUrl(it) }
+    exporter(
+        buildReportHtml(planName, planImageUrl, withIssues, issuesByLoc, photosByIssue, dataUris, locationCount, total, open, resolved),
+        "FloorPin — $planName",
+        Config.BASE_URL
+    )
+}
+
+private fun buildReportHtml(
+    planName: String,
+    planImageUrl: String?,
+    withIssues: List<Location>,
+    issuesByLoc: Map<String, List<Issue>>,
+    photosByIssue: Map<String, List<Photo>>,
+    dataUris: Map<String, String>,
     locationCount: Int,
     total: Int,
     open: Int,
@@ -168,11 +220,20 @@ private fun buildReportHtml(
 ): String {
     val blocks = withIssues.joinToString("") { loc ->
         val rows = (issuesByLoc[loc.id] ?: emptyList()).joinToString("") { i ->
+            val evidence = (photosByIssue[i.id]?.firstOrNull()?.imageKey)?.let { key ->
+                val url = "${Config.BASE_URL}/files/$key"
+                dataUris[url]?.let { dataUri ->
+                    """<img src="$dataUri" style="max-width:180px;border-radius:4px;margin:8px 0;display:block;border:1px solid #e5edf5" />"""
+                } ?: ""
+            } ?: ""
             """<div class="issue"><h4>${esc(i.title)}</h4><p>${esc(i.description)}</p>
-               <span class="badge ${i.status}">${esc(IssueStatus.fromWire(i.status).label)}</span> · ${fmtDate(i.createdAt)}</div>"""
+               <span class="badge ${i.status}">${esc(IssueStatus.fromWire(i.status).label)}</span> · ${fmtDate(i.createdAt)}$evidence</div>"""
         }
         """<div class="loc"><h3>${esc(loc.name)}</h3>$rows</div>"""
     }
+    val planImage = planImageUrl?.let { url ->
+        dataUris[url]?.let { """<img src="$it" style="max-width:100%;border-radius:6px;margin-bottom:24px;border:1px solid #e5edf5" />""" }
+    } ?: ""
     return """
         <!doctype html><html><head><meta charset="utf-8">
         <style>
@@ -197,6 +258,7 @@ private fun buildReportHtml(
           <div class="box"><div class="k">Open</div><div class="v" style="color:#ea2261">$open</div></div>
           <div class="box"><div class="k">Resolved</div><div class="v" style="color:#15be53">$resolved</div></div>
         </div>
+        $planImage
         $blocks
         <p style="margin-top:32px;color:#64748d;font-size:12px">FloorPin · Defect management &amp; inspection</p>
         </body></html>
