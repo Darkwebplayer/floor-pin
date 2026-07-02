@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -20,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
@@ -38,6 +40,8 @@ import dev.infyplus.floorpin.ui.components.AppIcons
 import dev.infyplus.floorpin.ui.components.AppTextField
 import dev.infyplus.floorpin.ui.components.AppTopBar
 import dev.infyplus.floorpin.ui.components.ButtonVariant
+import dev.infyplus.floorpin.ui.components.CardMenu
+import dev.infyplus.floorpin.ui.components.ConfirmDialog
 import dev.infyplus.floorpin.ui.rememberImagePicker
 import dev.infyplus.floorpin.ui.theme.Muted
 import dev.infyplus.floorpin.ui.theme.SurfaceWarm
@@ -71,6 +75,12 @@ class FloorPlansViewModel(private val container: AppContainer, private val proje
             .onFailure { error = it.message }
         uploading = false
     }
+
+    fun delete(id: String) = viewModelScope.launch {
+        runCatching { container.api.deleteFloorPlan(id) }
+            .onSuccess { container.data.floorPlans.remove(id) }
+            .onFailure { error = it.message }
+    }
 }
 
 @Composable
@@ -84,6 +94,7 @@ fun FloorPlansScreen(
     val vm: FloorPlansViewModel = viewModel(key = projectId) { FloorPlansViewModel(container, projectId) }
     val plans by vm.plans.collectAsStateWithLifecycle()
     var showAdd by remember { mutableStateOf(false) }
+    var deleting by remember { mutableStateOf<FloorPlan?>(null) }
     LaunchedEffect(projectId) { vm.refresh() } // refetch each time the screen is entered
 
     Column(Modifier.fillMaxSize().background(SurfaceWarm)) {
@@ -106,7 +117,10 @@ fun FloorPlansScreen(
                             }
                         }
                         Column(Modifier.padding(16.dp).fillMaxWidth(), Arrangement.spacedBy(8.dp)) {
-                            Text(fp.name, style = MaterialTheme.typography.titleLarge)
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text(fp.name, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                                CardMenu(onDelete = { deleting = fp })
+                            }
                             Text(fp.sub ?: "—", style = MaterialTheme.typography.bodyMedium, color = Muted)
                             AppButton("Open inspection", onClick = { onOpenPlan(fp) }, small = true)
                         }
@@ -121,6 +135,14 @@ fun FloorPlansScreen(
             uploading = vm.uploading,
             onDismiss = { showAdd = false },
             onCreate = { name, bytes, fileName -> vm.upload(name, bytes, fileName) { showAdd = false; onOpenPlan(it) } },
+        )
+    }
+    deleting?.let { fp ->
+        ConfirmDialog(
+            title = "Delete floor plan?",
+            message = "\"${fp.name}\" and all its locations, issues and photos will be permanently deleted.",
+            onConfirm = { vm.delete(fp.id) },
+            onDismiss = { deleting = null },
         )
     }
 }

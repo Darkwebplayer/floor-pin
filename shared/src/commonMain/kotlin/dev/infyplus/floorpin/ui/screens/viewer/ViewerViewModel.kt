@@ -61,7 +61,7 @@ class ViewerViewModel(
 
     // ── location writes ──
     fun addLocation(x: Double, y: Double): Location =
-        container.data.locations.create(floorPlanId, "New location", x, y).also { container.sync.requestSync() }
+        container.data.locations.create(floorPlanId, "", x, y).also { container.sync.requestSync() }
     fun renameLocation(id: String, name: String) {
         container.data.locations.rename(id, name); container.sync.requestSync()
     }
@@ -86,6 +86,14 @@ class ViewerViewModel(
     }
     fun setIssueStatus(id: String, status: IssueStatus) {
         container.data.issues.updateStatus(id, status); container.sync.requestSync()
+    }
+    fun updateIssue(id: String, title: String, desc: String?, priority: IssuePriority, type: String?, category: String?, item: String?) {
+        container.data.issues.update(id, title, desc, priority, type, category, item); container.sync.requestSync()
+    }
+    fun deletePhoto(photoId: String) = viewModelScope.launch {
+        runCatching { container.api.deletePhoto(photoId) }
+            .onSuccess { container.data.issues.deletePhoto(photoId) }
+            .onFailure { error = it.message }
     }
     fun moveIssue(id: String, x: Double, y: Double) {
         container.data.issues.move(id, x, y); container.sync.requestSync()

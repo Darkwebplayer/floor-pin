@@ -3,6 +3,7 @@ package dev.infyplus.floorpin.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -19,6 +20,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
@@ -33,6 +35,9 @@ import dev.infyplus.floorpin.ui.components.AppCard
 import dev.infyplus.floorpin.ui.components.AppIcons
 import dev.infyplus.floorpin.ui.components.AppTextField
 import dev.infyplus.floorpin.ui.components.AppTopBar
+import dev.infyplus.floorpin.ui.components.ButtonVariant
+import dev.infyplus.floorpin.ui.components.CardMenu
+import dev.infyplus.floorpin.ui.components.ConfirmDialog
 import dev.infyplus.floorpin.ui.theme.Muted
 import dev.infyplus.floorpin.ui.theme.SurfaceWarm
 import kotlinx.coroutines.flow.SharingStarted
@@ -59,6 +64,18 @@ class ProjectsViewModel(private val container: AppContainer) : ViewModel() {
             }
             .onFailure { error = it.message }
     }
+
+    fun update(id: String, name: String, description: String?) = viewModelScope.launch {
+        runCatching { container.api.updateProject(id, name, description) }
+            .onSuccess { container.data.projects.upsertFromServer(listOf(it.toRow())) }
+            .onFailure { error = it.message }
+    }
+
+    fun delete(id: String) = viewModelScope.launch {
+        runCatching { container.api.deleteProject(id) }
+            .onSuccess { container.data.projects.remove(id) }
+            .onFailure { error = it.message }
+    }
 }
 
 @Composable
@@ -70,6 +87,8 @@ fun ProjectsScreen(
     val vm: ProjectsViewModel = viewModel { ProjectsViewModel(container) }
     val projects by vm.projects.collectAsStateWithLifecycle()
     var showAdd by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf<Project?>(null) }
+    var deleting by remember { mutableStateOf<Project?>(null) }
     LaunchedEffect(Unit) { vm.refresh() } // refetch each time the screen is entered
 
     Column(Modifier.fillMaxSize().background(SurfaceWarm)) {
@@ -85,7 +104,10 @@ fun ProjectsScreen(
             items(projects, key = { it.id }) { p ->
                 AppCard(elevated = true, modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp)) {
                     Column(Modifier.padding(20.dp).fillMaxWidth(), Arrangement.spacedBy(8.dp)) {
-                        Text(p.name, style = MaterialTheme.typography.titleLarge)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text(p.name, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                            CardMenu(onEdit = { editing = p }, onDelete = { deleting = p })
+                        }
                         Text(p.description ?: "—", style = MaterialTheme.typography.bodyMedium, color = Muted)
                         AppButton("Open", onClick = { onOpenProject(p) }, small = true)
                     }
@@ -95,20 +117,38 @@ fun ProjectsScreen(
     }
 
     if (showAdd) {
-        CreateProjectDialog(
-            onDismiss = { showAdd = false },
-            onCreate = { name, desc -> showAdd = false; vm.create(name, desc) { onOpenProject(it) } },
+        ProjectDialog(title = "New project", onDismiss = { showAdd = false }) { name, desc ->
+            showAdd = false; vm.create(name, desc) { onOpenProject(it) }
+        }
+    }
+    editing?.let { p ->
+        ProjectDialog(title = "Edit project", initialName = p.name, initialDesc = p.description ?: "", onDismiss = { editing = null }) { name, desc ->
+            editing = null; vm.update(p.id, name, desc)
+        }
+    }
+    deleting?.let { p ->
+        ConfirmDialog(
+            title = "Delete project?",
+            message = "\"${p.name}\" and all its floor plans, locations, issues and photos will be permanently deleted.",
+            onConfirm = { vm.delete(p.id) },
+            onDismiss = { deleting = null },
         )
     }
 }
 
 @Composable
-private fun CreateProjectDialog(onDismiss: () -> Unit, onCreate: (String, String?) -> Unit) {
-    var name by remember { mutableStateOf("") }
-    var desc by remember { mutableStateOf("") }
+private fun ProjectDialog(
+    title: String,
+    initialName: String = "",
+    initialDesc: String = "",
+    onDismiss: () -> Unit,
+    onSave: (String, String?) -> Unit,
+) {
+    var name by remember { mutableStateOf(initialName) }
+    var desc by remember { mutableStateOf(initialDesc) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("New project") },
+        title = { Text(title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 AppTextField(name, { name = it }, label = "Project name", placeholder = "e.g. Northbridge FM")
@@ -116,8 +156,8 @@ private fun CreateProjectDialog(onDismiss: () -> Unit, onCreate: (String, String
             }
         },
         confirmButton = {
-            AppButton("Create", onClick = { if (name.isNotBlank()) onCreate(name.trim(), desc.trim().ifBlank { null }) })
+            AppButton("Save", onClick = { if (name.isNotBlank()) onSave(name.trim(), desc.trim().ifBlank { null }) })
         },
-        dismissButton = { AppButton("Cancel", onClick = onDismiss, variant = dev.infyplus.floorpin.ui.components.ButtonVariant.Neutral) },
+        dismissButton = { AppButton("Cancel", onClick = onDismiss, variant = ButtonVariant.Neutral) },
     )
 }

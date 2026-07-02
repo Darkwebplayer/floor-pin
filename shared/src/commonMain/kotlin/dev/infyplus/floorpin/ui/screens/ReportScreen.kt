@@ -1,19 +1,25 @@
 package dev.infyplus.floorpin.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -37,12 +43,15 @@ import dev.infyplus.floorpin.db.FloorPlan
 import dev.infyplus.floorpin.db.Issue
 import dev.infyplus.floorpin.db.Location
 import dev.infyplus.floorpin.db.Photo
+import dev.infyplus.floorpin.domain.IssuePriority
 import dev.infyplus.floorpin.domain.IssueStatus
 import dev.infyplus.floorpin.ui.components.AppButton
 import dev.infyplus.floorpin.ui.components.AppCard
 import dev.infyplus.floorpin.ui.components.AppIcons
 import dev.infyplus.floorpin.ui.components.AppTopBar
+import dev.infyplus.floorpin.ui.components.ImageLightbox
 import dev.infyplus.floorpin.ui.components.StatusBadge
+import dev.infyplus.floorpin.ui.components.photoImageUrl
 import dev.infyplus.floorpin.ui.rememberReportExporter
 import dev.infyplus.floorpin.ui.theme.Accent
 import dev.infyplus.floorpin.ui.theme.BorderColor
@@ -88,7 +97,7 @@ fun ReportScreen(container: AppContainer, floorPlanId: String, onBack: () -> Uni
         AppTopBar(title = "Inspection report", crumb = planName, onBack = onBack) {
             AppButton("Export PDF", onClick = {
                 scope.launch {
-                    exportPdf(container, exporter, floorPlan, planName, withIssues, issuesByLoc, photosByIssue, locations.size, total, open, resolved)
+                    exportPdf(container, exporter, floorPlan, planName, locations, issues, withIssues, issuesByLoc, photosByIssue, total, open, resolved)
                 }
             }, small = true, leadingIcon = AppIcons.Download)
         }
@@ -111,7 +120,7 @@ fun ReportScreen(container: AppContainer, floorPlanId: String, onBack: () -> Uni
                         }
                         floorPlan?.let { fp ->
                             floorPlanImageUrl(fp)?.let { url ->
-                                AsyncImage(url, "Floor plan", Modifier.fillMaxWidth().padding(top = 24.dp).background(SurfaceWarm, RoundedCornerShape(6.dp)), contentScale = ContentScale.FillWidth)
+                                PlanWithPins(fp, url, locations, issues, issuesByLoc)
                             }
                         }
                     }
@@ -145,26 +154,85 @@ private fun SummaryBox(label: String, value: String, modifier: Modifier = Modifi
     }
 }
 
+/** Dot/pin color for an issue status (mirrors the viewer legend). */
+private fun pinStatusColor(status: String): androidx.compose.ui.graphics.Color = when (status) {
+    IssueStatus.OPEN.wire -> Danger
+    IssueStatus.IN_PROGRESS.wire -> androidx.compose.ui.graphics.Color(0xFFC98A2C)
+    IssueStatus.RESOLVED.wire -> Success
+    IssueStatus.CLOSED.wire -> Muted
+    else -> Accent
+}
+
+/** Report plan image with every location pin + issue dot overlaid, matching the live plan state. */
+@Composable
+private fun PlanWithPins(fp: FloorPlan, url: String, locations: List<Location>, issues: List<Issue>, issuesByLoc: Map<String, List<Issue>>) {
+    val ar = ((fp.width ?: 0.0) / (fp.height ?: 0.0)).toFloat().let { if (it.isFinite() && it > 0f) it else 1.4f }
+    BoxWithConstraints(Modifier.fillMaxWidth().padding(top = 24.dp).aspectRatio(ar).background(SurfaceWarm, RoundedCornerShape(6.dp))) {
+        AsyncImage(url, "Floor plan", Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+        val w = maxWidth; val h = maxHeight
+        locations.forEach { loc ->
+            val statuses = (issuesByLoc[loc.id] ?: emptyList()).map { it.status }
+            val c = when {
+                statuses.any { it == IssueStatus.OPEN.wire } -> Danger
+                statuses.any { it == IssueStatus.IN_PROGRESS.wire } -> androidx.compose.ui.graphics.Color(0xFFC98A2C)
+                statuses.any { it == IssueStatus.RESOLVED.wire } -> Success
+                statuses.isNotEmpty() -> Muted
+                else -> Accent
+            }
+            Box(
+                Modifier.offset(x = w * (loc.x.toFloat() / 100f) - 7.dp, y = h * (loc.y.toFloat() / 100f) - 7.dp)
+                    .size(14.dp).background(c, CircleShape).border(2.dp, White, CircleShape),
+            )
+        }
+        issues.forEach { i ->
+            val ix = i.x ?: return@forEach
+            val iy = i.y ?: return@forEach
+            Box(
+                Modifier.offset(x = w * (ix.toFloat() / 100f) - 5.dp, y = h * (iy.toFloat() / 100f) - 5.dp)
+                    .size(10.dp).background(pinStatusColor(i.status), CircleShape).border(1.5.dp, White, CircleShape),
+            )
+        }
+    }
+}
+
 @Composable
 private fun ReportIssueRow(issue: Issue, photos: List<Photo>) {
     Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         Column(Modifier.weight(1f)) {
-            Text(issue.title, style = MaterialTheme.typography.titleMedium, color = Ink)
-            if (!issue.description.isNullOrBlank()) Text(issue.description!!, style = MaterialTheme.typography.bodyMedium, color = Ink, modifier = Modifier.padding(top = 6.dp))
+            Text("#${issue.id.take(8)} · ${issue.title}", style = MaterialTheme.typography.titleMedium, color = Ink)
             Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 StatusBadge(IssueStatus.fromWire(issue.status))
+                Text(IssuePriority.fromWire(issue.priority).label, style = MaterialTheme.typography.labelSmall, color = Ink)
                 Text(fmtDate(issue.createdAt), style = MaterialTheme.typography.labelSmall, color = Muted)
             }
+            listOfNotNull(issue.category?.takeIf { it.isNotBlank() }, issue.type?.takeIf { it.isNotBlank() })
+                .joinToString(" · ").takeIf { it.isNotBlank() }
+                ?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Muted, modifier = Modifier.padding(top = 4.dp)) }
+            issue.item?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Muted) }
+            issue.assignedTo?.takeIf { it.isNotBlank() }?.let { Text("Assigned to $it", style = MaterialTheme.typography.bodySmall, color = Danger, modifier = Modifier.padding(top = 4.dp)) }
+            if (!issue.description.isNullOrBlank()) Text(issue.description!!, style = MaterialTheme.typography.bodyMedium, color = Ink, modifier = Modifier.padding(top = 6.dp))
+            coord(issue.x)?.let { cx -> coord(issue.y)?.let { cy -> Text("x:$cx / y:$cy", style = MaterialTheme.typography.labelSmall, color = Muted, modifier = Modifier.padding(top = 4.dp)) } }
         }
         if (photos.isNotEmpty()) {
-            photos.first().imageKey?.let {
-                AsyncImage("${Config.BASE_URL}/files/$it", "Evidence", Modifier.size(120.dp).background(SurfaceWarm, RoundedCornerShape(6.dp)), contentScale = ContentScale.Crop)
+            var lightboxUrl by remember { mutableStateOf<String?>(null) }
+            photoImageUrl(photos.first())?.let { url ->
+                AsyncImage(url, "Evidence", Modifier.size(120.dp).background(SurfaceWarm, RoundedCornerShape(6.dp)).clickable { lightboxUrl = url }, contentScale = ContentScale.Crop)
             }
+            ImageLightbox(lightboxUrl) { lightboxUrl = null }
         }
     }
 }
 
 private fun esc(s: String?): String = (s ?: "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+/** Fill color for a status dot/badge (mirrors the viewer legend). */
+private fun statusColor(status: String): String = when (status) {
+    IssueStatus.OPEN.wire -> "#ea2261"
+    IssueStatus.IN_PROGRESS.wire -> "#c98a2c"
+    IssueStatus.RESOLVED.wire -> "#15be53"
+    IssueStatus.CLOSED.wire -> "#64748d"
+    else -> "#533afd"
+}
 
 @OptIn(ExperimentalEncodingApi::class)
 private suspend fun exportPdf(
@@ -172,10 +240,11 @@ private suspend fun exportPdf(
     exporter: (String, String, String) -> Unit,
     floorPlan: FloorPlan?,
     planName: String,
+    allLocations: List<Location>,
+    allIssues: List<Issue>,
     withIssues: List<Location>,
     issuesByLoc: Map<String, List<Issue>>,
     photosByIssue: Map<String, List<Photo>>,
-    locationCount: Int,
     total: Int,
     open: Int,
     resolved: Int,
@@ -184,8 +253,9 @@ private suspend fun exportPdf(
     floorPlan?.let { floorPlanImageUrl(it) }?.let { seen.add(it) }
     for (loc in withIssues) {
         for (issue in issuesByLoc[loc.id] ?: emptyList()) {
-            photosByIssue[issue.id]?.firstOrNull()?.imageKey?.let { key ->
-                seen.add("${Config.BASE_URL}/files/$key")
+            // all evidence photos (the reference report shows a full gallery, not just the first)
+            photosByIssue[issue.id]?.forEach { p ->
+                seen.add("${Config.BASE_URL}/files/${p.imageKey}")
             }
         }
     }
@@ -200,15 +270,19 @@ private suspend fun exportPdf(
 
     val planImageUrl = floorPlan?.let { floorPlanImageUrl(it) }
     exporter(
-        buildReportHtml(planName, planImageUrl, withIssues, issuesByLoc, photosByIssue, dataUris, locationCount, total, open, resolved),
+        buildReportHtml(planName, planImageUrl, allLocations, allIssues, withIssues, issuesByLoc, photosByIssue, dataUris, allLocations.size, total, open, resolved),
         "FloorPin — $planName",
         Config.BASE_URL
     )
 }
 
+private fun coord(v: Double?): Int? = v?.let { (it + 0.5).toInt() }
+
 private fun buildReportHtml(
     planName: String,
     planImageUrl: String?,
+    allLocations: List<Location>,
+    allIssues: List<Issue>,
     withIssues: List<Location>,
     issuesByLoc: Map<String, List<Issue>>,
     photosByIssue: Map<String, List<Photo>>,
@@ -218,49 +292,121 @@ private fun buildReportHtml(
     open: Int,
     resolved: Int,
 ): String {
-    val blocks = withIssues.joinToString("") { loc ->
+    // One page per location, each starting fresh — never on the plan-image page.
+    val pages = withIssues.joinToString("") { loc ->
         val rows = (issuesByLoc[loc.id] ?: emptyList()).joinToString("") { i ->
-            val evidence = (photosByIssue[i.id]?.firstOrNull()?.imageKey)?.let { key ->
-                val url = "${Config.BASE_URL}/files/$key"
-                dataUris[url]?.let { dataUri ->
-                    """<img src="$dataUri" style="max-width:180px;border-radius:4px;margin:8px 0;display:block;border:1px solid #e5edf5" />"""
-                } ?: ""
-            } ?: ""
-            """<div class="issue"><h4>${esc(i.title)}</h4><p>${esc(i.description)}</p>
-               <span class="badge ${i.status}">${esc(IssueStatus.fromWire(i.status).label)}</span> · ${fmtDate(i.createdAt)}$evidence</div>"""
+            val photos = photosByIssue[i.id] ?: emptyList()
+            val primary = photos.firstOrNull()?.let { dataUris["${Config.BASE_URL}/files/${it.imageKey}"] }
+                ?.let { """<img class="primary" src="$it" />""" } ?: ""
+            val gallery = photos.drop(1).mapNotNull { dataUris["${Config.BASE_URL}/files/${it.imageKey}"] }
+                .joinToString("") { """<img src="$it" />""" }
+                .let { if (it.isBlank()) "" else """<div class="gallery">$it</div>""" }
+
+            val catType = listOfNotNull(i.category?.takeIf { it.isNotBlank() }, i.type?.takeIf { it.isNotBlank() })
+                .joinToString(" · ").let { if (it.isBlank()) "" else """<div class="cat">$it</div>""" }
+            val item = i.item?.takeIf { it.isNotBlank() }?.let { """<div class="item">${esc(it)}</div>""" } ?: ""
+            val assigned = i.assignedTo?.takeIf { it.isNotBlank() }
+                ?.let { """<div class="meta"><span class="k">Assigned to</span> <span class="assignee">${esc(it)}</span></div>""" } ?: ""
+            val cx = coord(i.x); val cy = coord(i.y)
+            val coords = if (cx != null && cy != null) """<div class="coords">x:$cx / y:$cy</div>""" else ""
+
+            """
+            <div class="issue">
+              <div class="ihead">#${esc(i.id.take(8))} - ${esc(i.title)}</div>
+              <div class="itop">
+                <div class="ileft">
+                  <div class="badges">
+                    <span class="badge ${i.status}">${esc(IssueStatus.fromWire(i.status).label)}</span>
+                    <span class="prio">${esc(IssuePriority.fromWire(i.priority).label)}</span>
+                  </div>
+                  $assigned
+                  $catType
+                  $item
+                  <div class="meta"><span class="k">Location</span> ${esc(loc.name)}</div>
+                  <div class="meta"><span class="k">Created</span> ${fmtDate(i.createdAt)}</div>
+                  ${if (!i.description.isNullOrBlank()) """<p class="desc">${esc(i.description)}</p>""" else ""}
+                </div>
+                <div class="iright">$coords$primary</div>
+              </div>
+              $gallery
+            </div>
+            """
         }
-        """<div class="loc"><h3>${esc(loc.name)}</h3>$rows</div>"""
+        """<section class="page loc"><div class="locbar">${esc(planName)} / ${esc(loc.name)}</div>$rows</section>"""
     }
-    val planImage = planImageUrl?.let { url ->
-        dataUris[url]?.let { """<img src="$it" style="max-width:100%;border-radius:6px;margin-bottom:24px;border:1px solid #e5edf5" />""" }
+
+    // Plan image with live location pins + issue dots overlaid, matching the current plan state.
+    val overlay = buildString {
+        for (loc in allLocations) {
+            val statuses = (issuesByLoc[loc.id] ?: emptyList()).map { IssueStatus.fromWire(it.status).wire }
+            val worst = statuses.firstOrNull { it == IssueStatus.OPEN.wire }
+                ?: statuses.firstOrNull { it == IssueStatus.IN_PROGRESS.wire }
+                ?: statuses.firstOrNull { it == IssueStatus.RESOLVED.wire }
+                ?: statuses.firstOrNull()
+            val c = worst?.let { statusColor(it) } ?: "#533afd"
+            append("""<div class="pin" style="left:${loc.x}%;top:${loc.y}%;background:$c"><span class="pinlabel">${esc(loc.name)}</span></div>""")
+        }
+        for (i in allIssues) {
+            val ix = i.x ?: continue; val iy = i.y ?: continue
+            append("""<div class="dot" style="left:$ix%;top:$iy%;background:${statusColor(i.status)}"></div>""")
+        }
+    }
+    val planBlock = planImageUrl?.let { url ->
+        dataUris[url]?.let { """<div class="planwrap"><img class="plan" src="$it" />$overlay</div>""" }
     } ?: ""
+
     return """
         <!doctype html><html><head><meta charset="utf-8">
         <style>
-          body{font-family:-apple-system,system-ui,sans-serif;color:#273951;padding:24px}
+          body{font-family:-apple-system,system-ui,sans-serif;color:#273951;margin:0}
+          .page{padding:24px 28px}
+          .page.loc{page-break-before:always}
           h1{color:#061b31;font-weight:300;font-size:32px;margin:0 0 4px}
           .eyebrow{color:#533afd;font-size:11px;letter-spacing:.1em;text-transform:uppercase}
           .summary{display:flex;gap:16px;margin:24px 0}
           .box{border:1px solid #e5edf5;border-radius:6px;padding:12px;flex:1}
           .box .k{font-size:11px;text-transform:uppercase;color:#64748d}
           .box .v{font-size:28px;color:#061b31}
-          .loc{margin-top:24px} .loc h3{font-size:20px;color:#061b31;border-bottom:1px solid #e5edf5;padding-bottom:6px}
-          .issue{padding:12px 0;border-bottom:1px dashed #e5edf5}
-          .issue h4{margin:0;color:#061b31} .issue p{margin:6px 0;color:#273951;font-size:14px}
-          .badge{font-size:12px;padding:2px 8px;border-radius:4px;background:#f6f9fc;border:1px solid #e5edf5}
-          .badge.open{color:#b3164a} .badge.resolved{color:#108c3d} .badge.in_progress{color:#9b6829}
+          .planwrap{position:relative;display:inline-block;width:100%;margin-top:8px}
+          .plan{display:block;width:100%;border:1px solid #e5edf5;border-radius:6px}
+          .pin{position:absolute;transform:translate(-50%,-100%);width:14px;height:14px;border-radius:50% 50% 50% 0;
+               transform-origin:bottom;border:2px solid #fff;box-shadow:0 1px 2px rgba(0,0,0,.3)}
+          .pin{transform:translate(-50%,-100%) rotate(-45deg)}
+          .pinlabel{position:absolute;left:50%;top:120%;transform:translateX(-50%) rotate(45deg);white-space:nowrap;
+               font-size:9px;color:#061b31;background:rgba(255,255,255,.9);padding:0 3px;border-radius:3px}
+          .dot{position:absolute;transform:translate(-50%,-50%);width:9px;height:9px;border-radius:50%;border:1.5px solid #fff}
+          .locbar{background:#eef1e0;border:1px solid #e0e4cf;border-radius:4px;padding:8px 12px;font-size:15px;color:#061b31;margin-bottom:16px}
+          .issue{padding:4px 0 16px;border-bottom:1px solid #e5edf5;margin-bottom:16px}
+          .ihead{font-size:17px;font-weight:700;color:#061b31;border-bottom:2px solid #9aa4b1;padding-bottom:6px;margin-bottom:10px}
+          .itop{display:flex;gap:16px;justify-content:space-between}
+          .ileft{flex:1}
+          .iright{text-align:right;flex-shrink:0}
+          .coords{font-size:12px;color:#061b31;margin-bottom:6px}
+          .primary{max-width:180px;max-height:200px;border-radius:4px;border:1px solid #e5edf5}
+          .badges{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+          .badge{font-size:13px;font-weight:700;padding:4px 14px;border-radius:3px;background:#f6f9fc;border:1px solid #e5edf5}
+          .badge.open{background:#f6a623;color:#061b31} .badge.resolved{background:#15be53;color:#fff}
+          .badge.in_progress{background:#c98a2c;color:#fff} .badge.closed{background:#e5edf5;color:#64748d}
+          .prio{font-size:14px;color:#273951}
+          .cat,.item{font-size:14px;color:#273951;margin:2px 0}
+          .meta{font-size:14px;color:#273951;margin:2px 0} .meta .k{color:#64748d}
+          .assignee{color:#c0392b}
+          .desc{font-size:14px;color:#273951;margin:8px 0 0}
+          .gallery{border:1px solid #9b1c1c;border-radius:4px;padding:10px;margin-top:12px;display:flex;flex-wrap:wrap;gap:10px}
+          .gallery img{max-width:180px;max-height:200px;border-radius:3px}
         </style></head><body>
-        <div class="eyebrow">Defect inspection report</div>
-        <h1>${esc(planName)}</h1>
-        <div class="summary">
-          <div class="box"><div class="k">Locations</div><div class="v">$locationCount</div></div>
-          <div class="box"><div class="k">Total issues</div><div class="v">$total</div></div>
-          <div class="box"><div class="k">Open</div><div class="v" style="color:#ea2261">$open</div></div>
-          <div class="box"><div class="k">Resolved</div><div class="v" style="color:#15be53">$resolved</div></div>
-        </div>
-        $planImage
-        $blocks
-        <p style="margin-top:32px;color:#64748d;font-size:12px">FloorPin · Defect management &amp; inspection</p>
+        <section class="page">
+          <div class="eyebrow">Defect inspection report</div>
+          <h1>${esc(planName)}</h1>
+          <div class="summary">
+            <div class="box"><div class="k">Locations</div><div class="v">$locationCount</div></div>
+            <div class="box"><div class="k">Total issues</div><div class="v">$total</div></div>
+            <div class="box"><div class="k">Open</div><div class="v" style="color:#ea2261">$open</div></div>
+            <div class="box"><div class="k">Resolved</div><div class="v" style="color:#15be53">$resolved</div></div>
+          </div>
+          $planBlock
+        </section>
+        $pages
         </body></html>
     """.trimIndent()
 }

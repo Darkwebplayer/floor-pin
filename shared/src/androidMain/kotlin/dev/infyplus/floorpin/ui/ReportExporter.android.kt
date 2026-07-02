@@ -3,7 +3,12 @@ package dev.infyplus.floorpin.ui
 import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Build
+import android.os.Bundle
+import android.os.CancellationSignal
+import android.os.ParcelFileDescriptor
+import android.print.PageRange
 import android.print.PrintAttributes
+import android.print.PrintDocumentAdapter
 import android.print.PrintManager
 import android.util.Log
 import android.view.ViewGroup
@@ -130,14 +135,34 @@ actual fun rememberReportExporter(): (html: String, jobName: String, baseUrl: St
 
 private fun doPrint(context: Context, webView: WebView, jobName: String) {
     val printManager = context.getSystemService(Context.PRINT_SERVICE) as PrintManager
-    val adapter = webView.createPrintDocumentAdapter(jobName)
+    // Tear the WebView down only when the print framework is done with the adapter (onFinish) —
+    // NOT on a fixed timer. A timer races the system print dialog: if the user takes >3s to tap
+    // "Save", the WebView (and its adapter) is already destroyed and saving fails.
+    val base = webView.createPrintDocumentAdapter(jobName)
+    val adapter = object : PrintDocumentAdapter() {
+        override fun onStart() = base.onStart()
+        override fun onLayout(
+            oldAttributes: PrintAttributes?,
+            newAttributes: PrintAttributes?,
+            cancellationSignal: CancellationSignal?,
+            callback: LayoutResultCallback?,
+            extras: Bundle?,
+        ) = base.onLayout(oldAttributes, newAttributes, cancellationSignal, callback, extras)
+
+        override fun onWrite(
+            pages: Array<out PageRange>?,
+            destination: ParcelFileDescriptor?,
+            cancellationSignal: CancellationSignal?,
+            callback: WriteResultCallback?,
+        ) = base.onWrite(pages, destination, cancellationSignal, callback)
+
+        override fun onFinish() {
+            base.onFinish()
+            (webView.parent as? ViewGroup)?.removeView(webView)
+            webView.destroy()
+            Log.d(TAG, "WebView detached and destroyed after print finished")
+        }
+    }
     printManager.print(jobName, adapter, PrintAttributes.Builder().build())
     Log.d(TAG, "Print job submitted: $jobName")
-
-    // Detach from window after a short delay to let print capture complete
-    webView.postDelayed({
-        (webView.parent as? ViewGroup)?.removeView(webView)
-        webView.destroy()
-        Log.d(TAG, "WebView detached and destroyed")
-    }, 3000)
 }

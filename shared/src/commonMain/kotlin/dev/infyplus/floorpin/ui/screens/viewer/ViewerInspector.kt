@@ -2,11 +2,16 @@ package dev.infyplus.floorpin.ui.screens.viewer
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -28,26 +33,32 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
-import dev.infyplus.floorpin.Config
 import dev.infyplus.floorpin.data.remote.ActivityLogDto
 import dev.infyplus.floorpin.db.Issue
 import dev.infyplus.floorpin.db.Location
+import dev.infyplus.floorpin.db.Photo
 import dev.infyplus.floorpin.domain.IssuePriority
 import dev.infyplus.floorpin.domain.IssueStatus
 import dev.infyplus.floorpin.ui.components.AppButton
 import dev.infyplus.floorpin.ui.components.AppIcons
 import dev.infyplus.floorpin.ui.components.AppTextField
 import dev.infyplus.floorpin.ui.components.ButtonVariant
+import dev.infyplus.floorpin.ui.components.ConfirmDialog
+import dev.infyplus.floorpin.ui.components.ImageLightbox
 import dev.infyplus.floorpin.ui.components.StatusBadge
+import dev.infyplus.floorpin.ui.components.photoImageUrl
 import dev.infyplus.floorpin.ui.components.rememberPhotoMarker
 import dev.infyplus.floorpin.ui.rememberCameraCapture
 import dev.infyplus.floorpin.ui.rememberImagePicker
 import dev.infyplus.floorpin.ui.theme.Accent
 import dev.infyplus.floorpin.ui.theme.BorderColor
+import dev.infyplus.floorpin.ui.theme.Danger
 import dev.infyplus.floorpin.ui.theme.Ink
 import dev.infyplus.floorpin.ui.theme.Muted
 import dev.infyplus.floorpin.ui.theme.SurfaceWarm
@@ -116,6 +127,7 @@ private fun LocationDetail(vm: ViewerViewModel, location: Location, issues: List
     var name by remember(location.id) { mutableStateOf(location.name) }
     var showAdd by remember { mutableStateOf(false) }
     var tab by remember(location.id) { mutableStateOf(0) }
+    var confirmDelete by remember { mutableStateOf(false) }
 
     // Commit the name once, when this pin's inspector closes (Done, tap-away, or switching pins) —
     // not on every keystroke. Only writes if the name actually changed.
@@ -126,27 +138,42 @@ private fun LocationDetail(vm: ViewerViewModel, location: Location, issues: List
         }
     }
 
-    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
-        Text(name, style = MaterialTheme.typography.headlineMedium, color = Ink)
-        AppTextField(name, { name = it }, label = "Location name", modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 12.dp)) {
-            Chip("Issues (${issues.size})", tab == 0) { tab = 0 }
-            Chip("Activity", tab == 1) { tab = 1 }
+    Column(Modifier.fillMaxWidth().fillMaxHeight()) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+            // editable name + inline delete (Done lives in the header ✕)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                AppTextField(name, { name = it }, label = "Location name", modifier = Modifier.weight(1f))
+                Surface(onClick = { confirmDelete = true }, color = Color.Transparent, shape = CircleShape, modifier = Modifier.padding(start = 8.dp).size(40.dp)) {
+                    Box(contentAlignment = Alignment.Center) { Icon(AppIcons.Trash, "Remove location", Modifier.size(20.dp), tint = Danger) }
+                }
+            }
+            // tabs, with Add issue beside them
+            Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Chip("Issues (${issues.size})", tab == 0) { tab = 0 }
+                    Chip("Activity", tab == 1) { tab = 1 }
+                }
+                if (tab == 0) AppButton("Add issue", onClick = { showAdd = true }, small = true, leadingIcon = AppIcons.Add)
+            }
+        }
+
+        if (tab == 0) {
+            LazyColumn(Modifier.fillMaxWidth().weight(1f).padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (issues.isEmpty()) item { Text("No issues logged yet.", color = Muted, style = MaterialTheme.typography.bodyMedium) }
+                items(issues, key = { it.id }) { issue -> IssueCard(issue) { onOpenIssue(issue.id) } }
+            }
+        } else {
+            Box(Modifier.weight(1f)) { ActivityList(vm, location.id) }
         }
     }
 
-    if (tab == 0) {
-        LazyColumn(Modifier.fillMaxWidth().padding(horizontal = 20.dp).height(260.dp)) {
-            if (issues.isEmpty()) item { Text("No issues logged yet.", color = Muted, style = MaterialTheme.typography.bodyMedium) }
-            items(issues, key = { it.id }) { issue -> IssueCard(issue) { onOpenIssue(issue.id) } }
-        }
-        Row(Modifier.fillMaxWidth().padding(20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            AppButton("Add issue", onClick = { showAdd = true }, small = true, leadingIcon = AppIcons.Add)
-            AppButton("Done", onClick = onClose, small = true, variant = ButtonVariant.Neutral)
-            AppButton("Remove location", onClick = { vm.deleteLocation(location.id) }, small = true, variant = ButtonVariant.Danger)
-        }
-    } else {
-        ActivityList(vm, location.id)
+    if (confirmDelete) {
+        ConfirmDialog(
+            title = "Delete location?",
+            message = "\"${location.name}\" and all its issues and photos will be permanently deleted.",
+            onConfirm = { vm.deleteLocation(location.id); onClose() },
+            onDismiss = { confirmDelete = false },
+        )
     }
 
     if (showAdd) {
@@ -218,6 +245,10 @@ private fun IssueCard(issue: Issue, onClick: () -> Unit) {
 @Composable
 private fun IssueDetail(vm: ViewerViewModel, location: Location, issue: Issue, onBack: () -> Unit) {
     val photos by remember(issue.id) { vm.observePhotos(issue.id) }.collectAsStateWithLifecycle(emptyList())
+    var lightboxPhoto by remember { mutableStateOf<Photo?>(null) }
+    var showEdit by remember { mutableStateOf(false) }
+    var deletePhotoId by remember { mutableStateOf<String?>(null) }
+    var confirmDelete by remember { mutableStateOf(false) }
     val annotate = rememberPhotoMarker()
     val pick = rememberImagePicker { bytes, name ->
         annotate(bytes, name) { result ->
@@ -230,20 +261,39 @@ private fun IssueDetail(vm: ViewerViewModel, location: Location, issue: Issue, o
         }
     }
 
-    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+    val meta = listOfNotNull(
+        "Priority" to IssuePriority.fromWire(issue.priority).label,
+        issue.type?.takeIf { it.isNotBlank() }?.let { "Type" to it },
+        issue.category?.takeIf { it.isNotBlank() }?.let { "Category" to it },
+        issue.item?.takeIf { it.isNotBlank() }?.let { "Item" to it },
+    )
+
+    Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
         AppButton(location.name, onClick = onBack, small = true, variant = ButtonVariant.Neutral, leadingIcon = AppIcons.ChevronLeft)
-        Text(issue.title, style = MaterialTheme.typography.headlineMedium, color = Ink, modifier = Modifier.padding(vertical = 12.dp))
-        Box(Modifier.padding(bottom = 8.dp)) { StatusBadge(IssueStatus.fromWire(issue.status)) }
-        if (!issue.description.isNullOrBlank()) Text(issue.description!!, style = MaterialTheme.typography.bodyMedium, color = Ink)
+        Text(issue.title, style = MaterialTheme.typography.headlineMedium, color = Ink, modifier = Modifier.padding(top = 12.dp, bottom = 10.dp))
+        Box(Modifier.padding(bottom = 12.dp)) { StatusBadge(IssueStatus.fromWire(issue.status)) }
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            meta.forEach { (label, value) ->
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(label, style = MaterialTheme.typography.bodySmall, color = Muted)
+                    Text(value, style = MaterialTheme.typography.bodySmall, color = Ink)
+                }
+            }
+        }
+        if (!issue.description.isNullOrBlank()) Text(issue.description!!, style = MaterialTheme.typography.bodyMedium, color = Ink, modifier = Modifier.padding(top = 12.dp))
 
         // photos
-        FlowRow(Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FlowRow(Modifier.fillMaxWidth().padding(vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             photos.forEach { p ->
-                p.imageKey?.let {
+                photoImageUrl(p)?.let { url ->
                     AsyncImage(
-                        model = "${Config.BASE_URL}/files/$it",
+                        model = url,
                         contentDescription = "Photo",
-                        modifier = Modifier.size(72.dp).background(SurfaceWarm, RoundedCornerShape(6.dp)),
+                        modifier = Modifier.size(72.dp)
+                            .background(SurfaceWarm, RoundedCornerShape(8.dp))
+                            .border(1.dp, BorderColor, RoundedCornerShape(8.dp))
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { lightboxPhoto = p },
                         contentScale = ContentScale.Crop,
                     )
                 }
@@ -254,11 +304,80 @@ private fun IssueDetail(vm: ViewerViewModel, location: Location, issue: Issue, o
             AppButton("Gallery", onClick = pick, small = true, variant = ButtonVariant.Neutral, leadingIcon = AppIcons.Upload)
         }
 
-        Text("Status", style = MaterialTheme.typography.bodyMedium, color = Ink, modifier = Modifier.padding(top = 16.dp, bottom = 6.dp))
+        Text("Status", style = MaterialTheme.typography.bodyMedium, color = Ink, modifier = Modifier.padding(top = 20.dp, bottom = 6.dp))
         StatusChips(IssueStatus.fromWire(issue.status)) { vm.setIssueStatus(issue.id, it) }
 
-        AppButton("Remove issue", onClick = { vm.deleteIssue(issue.id); onBack() }, small = true, variant = ButtonVariant.Danger, modifier = Modifier.padding(top = 16.dp, bottom = 20.dp))
+        Row(Modifier.fillMaxWidth().padding(top = 20.dp, bottom = 24.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            AppButton("Edit issue", onClick = { showEdit = true }, small = true, variant = ButtonVariant.Neutral, leadingIcon = AppIcons.Doc)
+            AppButton("Remove issue", onClick = { confirmDelete = true }, small = true, variant = ButtonVariant.Danger, leadingIcon = AppIcons.Trash)
+        }
     }
+
+    lightboxPhoto?.let { p ->
+        ImageLightbox(
+            url = photoImageUrl(p),
+            onDelete = { deletePhotoId = p.id; lightboxPhoto = null },
+            onDismiss = { lightboxPhoto = null },
+        )
+    }
+
+    if (showEdit) {
+        EditIssueDialog(issue, onDismiss = { showEdit = false }) { title, desc, priority, type, category, item ->
+            showEdit = false
+            vm.updateIssue(issue.id, title, desc, priority, type, category, item)
+        }
+    }
+    deletePhotoId?.let { pid ->
+        ConfirmDialog(
+            title = "Delete photo?",
+            message = "This photo will be permanently removed.",
+            onConfirm = { vm.deletePhoto(pid) },
+            onDismiss = { deletePhotoId = null },
+        )
+    }
+    if (confirmDelete) {
+        ConfirmDialog(
+            title = "Delete issue?",
+            message = "\"${issue.title}\" and its photos will be permanently deleted.",
+            onConfirm = { vm.deleteIssue(issue.id); onBack() },
+            onDismiss = { confirmDelete = false },
+        )
+    }
+}
+
+@Composable
+private fun EditIssueDialog(
+    issue: Issue,
+    onDismiss: () -> Unit,
+    onSave: (title: String, desc: String?, priority: IssuePriority, type: String?, category: String?, item: String?) -> Unit,
+) {
+    var title by remember { mutableStateOf(issue.title) }
+    var desc by remember { mutableStateOf(issue.description ?: "") }
+    var type by remember { mutableStateOf(issue.type ?: "") }
+    var category by remember { mutableStateOf(issue.category ?: "") }
+    var item by remember { mutableStateOf(issue.item ?: "") }
+    var priority by remember { mutableStateOf(IssuePriority.fromWire(issue.priority)) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit issue") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                AppTextField(title, { title = it }, label = "Issue title")
+                AppTextField(desc, { desc = it }, label = "Description", singleLine = false)
+                AppTextField(type, { type = it }, label = "Type")
+                AppTextField(category, { category = it }, label = "Category")
+                AppTextField(item, { item = it }, label = "Item")
+                Text("Priority", style = MaterialTheme.typography.bodySmall, color = Muted)
+                PriorityChips(priority) { priority = it }
+            }
+        },
+        confirmButton = {
+            AppButton("Save", onClick = {
+                if (title.isNotBlank()) onSave(title.trim(), desc.trim().ifBlank { null }, priority, type.trim().ifBlank { null }, category.trim().ifBlank { null }, item.trim().ifBlank { null })
+            })
+        },
+        dismissButton = { AppButton("Cancel", onClick = onDismiss, variant = ButtonVariant.Neutral) },
+    )
 }
 
 @Composable
@@ -324,7 +443,7 @@ internal fun AddIssueDialog(
         title = { Text(if (step == 0) "New issue" else "Add a photo") },
         text = {
             if (step == 0) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     AppTextField(title, { title = it }, label = "Issue title", placeholder = "e.g. Sink not working")
                     AppTextField(desc, { desc = it }, label = "Description", placeholder = "What's wrong…", singleLine = false)
                     AppTextField(type, { type = it }, label = "Type", placeholder = "e.g. Plumbing")
@@ -336,7 +455,7 @@ internal fun AddIssueDialog(
                     PriorityChips(priority) { priority = it }
                 }
             } else {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Attach a photo (optional)", style = MaterialTheme.typography.bodySmall, color = Muted)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         AppButton("Take photo", onClick = takePhoto, small = true, variant = ButtonVariant.Neutral, leadingIcon = AppIcons.Camera)

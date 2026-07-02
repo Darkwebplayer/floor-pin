@@ -59,6 +59,7 @@ Better Auth endpoints (`/api/auth/**`) return their own error envelope.
 { "id": "string", "locationId": "string", "title": "string",
   "description": "string|null", "status": "open", "priority": "medium",
   "type": "string|null", "category": "string|null",
+  "x": "number|null", "y": "number|null",
   "assignedTo": "userId|null", "createdBy": "userId",
   "resolvedAt": "iso|null", "createdAt": "iso", "updatedAt": "iso" }
 ```
@@ -127,7 +128,9 @@ List all projects. → `200` `Project[]`
 At least one field. → `200` `Project` · `404`
 
 ### `DELETE /api/projects/:id`
-Cascades to floor plans → locations → issues → photos. → `200` `{ "ok": true }` · `404`
+Cascades to floor plans → locations → issues → photos, and purges every
+descendant image (floor-plan images + issue photos) from R2. Only the creator
+(or an admin) may delete. → `200` `{ "ok": true }` · `403` · `404`
 
 ---
 
@@ -152,12 +155,14 @@ Floor plan **with its markers**. → `200`
 { "id": "...", "projectId": "...", "name": "...", "imageKey": "...",
   "width": null, "height": null, "createdBy": "...",
   "createdAt": "iso", "updatedAt": "iso",
-  "locations": [ /* Location[] */ ] }
+  "locations": [ /* Location & each with nested issues[], each issue with photos[] */ ] }
 ```
 `404` if missing.
 
 ### `DELETE /api/floor-plans/:id`
-Deletes the plan + its R2 image and cascades children. → `200` `{ "ok": true }` · `404`
+Deletes the plan and cascades children, purging the plan image and all
+descendant issue photos from R2. Only the creator (or an admin) may delete.
+→ `200` `{ "ok": true }` · `403` · `404`
 
 ---
 
@@ -179,6 +184,7 @@ Deletes the plan + its R2 image and cascades children. → `200` `{ "ok": true }
 Any subset; `x`/`y` validated 0–100. → `200` `Location` · `400` · `404`
 
 ### `DELETE /api/locations/:id`
+Cascades to issues → photos and purges those photos from R2.
 → `200` `{ "ok": true }` · `404`
 
 ---
@@ -186,15 +192,16 @@ Any subset; `x`/`y` validated 0–100. → `200` `Location` · `400` · `404`
 ## Issues — requires session
 
 ### `GET /api/locations/:locationId/issues`
-→ `200` `Issue[]`
+Each issue includes its `photos[]`. → `200` `Issue[]`
 
 ### `POST /api/locations/:locationId/issues`
 ```json
 { "title": "Cracked tile", "description": "...", "priority": "high",
   "status": "open", "type": "...", "category": "...",
-  "assignedTo": "userId", "id": "optional-uuid" }
+  "x": 25.5, "y": 60, "assignedTo": "userId", "id": "optional-uuid" }
 ```
-`title` required; `status`/`priority` validated against enums. → `201` `Issue` · `400`
+`title` required; `status`/`priority` validated against enums; `x`/`y` (optional)
+validated 0–100. → `201` `Issue` · `400`
 
 ### `GET /api/issues/:id`
 Issue **with photos**. → `200`
@@ -206,13 +213,15 @@ Issue **with photos**. → `200`
 ### `PATCH /api/issues/:id`
 ```json
 { "status": "resolved", "priority": "critical", "title": "...",
-  "description": "...", "type": "...", "category": "...", "assignedTo": "userId" }
+  "description": "...", "type": "...", "category": "...",
+  "x": 30, "y": 55, "assignedTo": "userId" }
 ```
 Any subset. Setting `status` to `resolved` stamps `resolvedAt`; any other status
 clears it. A status change logs `issue.status_changed` with `{ from, to }`.
 → `200` `Issue` · `400` · `404`
 
 ### `DELETE /api/issues/:id`
+Cascades to its photos and purges them from R2.
 → `200` `{ "ok": true }` · `404`
 
 ---
@@ -319,8 +328,11 @@ generates UUIDs; the server accepts replays without duplicating.
 - `data`: whitelisted fields per entity:
   - projects: `name`, `description`
   - locations: `label`, `x`, `y`, `floorPlanId`
-  - issues: `title`, `description`, `status`, `priority`, `type`, `category`, `assignedTo`, `locationId`
+  - issues: `title`, `description`, `status`, `priority`, `type`, `category`, `assignedTo`, `locationId`, `x`, `y`
 - `updatedAt`: client epoch‑ms, used for last‑write‑wins on `update`.
+
+A `delete` op cascades like the REST endpoints and purges any descendant images
+(floor-plan images / issue photos) from R2.
 
 Ops apply in `updatedAt` order. **Response:**
 ```json

@@ -61,6 +61,11 @@ object AppIcons {
     val Upload = svgIcon(IconPart("M12 16V4m0 0 4 4m-4-4-4 4M5 16v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2"))
     val Camera = svgIcon(IconPart("M3 16.5V18a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-1.5M12 3v12m0-12 4 4m-4-4-4 4"))
     val Trash = svgIcon(IconPart("M5 7h14M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"), strokeWidth = 1.6f)
+    val More = svgIcon(
+        IconPart("M12 4.6a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3Z", fill = true),
+        IconPart("M12 10.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3Z", fill = true),
+        IconPart("M12 16.4a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3Z", fill = true),
+    )
     val Share = svgIcon(IconPart("M18 8a3 3 0 1 0-2.8-4M6 12a3 3 0 1 0 0 .01M18 19a3 3 0 1 0-2.8-2M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"), strokeWidth = 1.6f)
     val Download = svgIcon(IconPart("M12 3v12m0 0 4-4m-4 4-4-4M5 17v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2"))
     val Eye = svgIcon(IconPart("M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z"), IconPart("M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"))

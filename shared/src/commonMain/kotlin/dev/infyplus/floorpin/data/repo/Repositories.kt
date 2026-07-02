@@ -57,6 +57,7 @@ class ProjectRepo(private val q: FloorpinQueries) {
     fun upsertFromServer(items: List<Project>) = q.transaction {
         items.forEach { q.upsertProject(it.id, it.name, it.description, it.createdAt, it.updatedAt) }
     }
+    fun remove(id: String) = q.deleteProject(id)
 }
 
 class FloorPlanRepo(private val q: FloorpinQueries) {
@@ -134,6 +135,17 @@ class IssueRepo(private val q: FloorpinQueries, private val outbox: Outbox) {
         q.moveIssue(x, y, now, id)
         outbox.enqueue("issues", "update", id, buildJsonObject { put("x", x); put("y", y) }, now)
     }
+    fun update(id: String, title: String, description: String?, priority: IssuePriority, type: String?, category: String?, item: String?) {
+        val now = nowMillis()
+        q.updateIssueDetails(title, description, priority.wire, type, category, item, now, id)
+        outbox.enqueue("issues", "update", id, buildJsonObject {
+            put("title", title); put("description", description ?: ""); put("priority", priority.wire)
+            if (type != null) put("type", type)
+            if (category != null) put("category", category)
+            if (item != null) put("item", item)
+        }, now)
+    }
+    fun deletePhoto(id: String) = q.deletePhoto(id)
     fun updateStatus(id: String, status: IssueStatus) {
         val now = nowMillis()
         val resolvedAt = if (status == IssueStatus.RESOLVED) now else null

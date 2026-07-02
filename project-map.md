@@ -5,7 +5,7 @@ Kotlin Multiplatform (Android + iOS) inspection/snagging app. Inspectors upload 
 
 ## Data Model (SQLDelight — `floorpin.sq`)
 
-Timestamps are epoch ms (`INTEGER`). IDs are client/server UUIDs (`TEXT`). Offline-first: all writes go local + outbox → `POST /api/sync`.
+Timestamps are epoch ms (`INTEGER`). IDs are client/server UUIDs (`TEXT`). Write model is split by entity (see **Write paths** below): location/issue writes are offline-first (local + outbox → `POST /api/sync`); project/floor-plan/photo writes are online-only direct REST.
 
 | Table | Fields | Notes |
 |-------|--------|-------|
@@ -38,8 +38,8 @@ issue 1──N photo
 ## Important Folders
 - **`shared/src/commonMain/`** — bulk of the app (KMP shared code)
   - `ui/screens/` — all screens: login, projects, floor plans, viewer (canvas), report, staff/admin
-  - `ui/screens/viewer/` — floor plan canvas with pan/zoom/pin interaction (ViewerScreen, Inspector, ViewModel)
-  - `ui/components/` — reusable: adaptive nav scaffold, hand-ported SVG icons, top bar, widgets, photo annotation marker
+  - `ui/screens/viewer/` — floor plan canvas with pan/zoom/pin interaction (ViewerScreen, Inspector, ViewModel). Pins/issue-dots show name labels and are dragged with a local offset that commits **once on release** (one write + one sync, no per-frame stutter). Inspector is a side panel (wide) or bottom sheet (narrow); location/issue detail actions are inline (Add beside tabs, delete icon by the name, Done = header ✕), not a bottom bar.
+  - `ui/components/` — reusable: adaptive nav scaffold, hand-ported SVG icons, top bar, widgets, photo annotation marker, fullscreen image lightbox (`ImageLightbox.kt`, + `photoImageUrl()` helper), CRUD controls (`CrudControls.kt`: `ConfirmDialog` for deletes, `CardMenu` 3-dot overflow)
   - `ui/nav/` — custom back-stack navigator (no Jetpack Navigation)
   - `ui/theme/` — Material3 theme, custom colors, typography, spacing
   - `data/repo/` — offline-first repos + outbox pattern for sync
@@ -59,6 +59,7 @@ issue 1──N photo
 - **Hand-ported SVG icons** — `AppIcons.kt` converts SVG path data into Compose `ImageVector` objects (avoids Material icon artifacts on multiplatform)
 - **Client-generated UUIDs** — app creates its own IDs for offline records (idempotent sync)
 - **Last-write-wins sync** — outbox carries `updatedAt`; server skips stale ops. `Outbox.enqueue` coalesces pending `update` ops for the same entity into one (merging fields, newest wins) to bound queue growth. `SyncEngine` retries indefinitely while offline (network failure never counts attempts), but dead-letters an op after `MAX_ATTEMPTS` (5) server *rejections* so one poison op can't block the queue.
+- **Write paths differ by entity** — **locations & issues** write local + outbox (offline-capable, LWW via sync). **Projects, floor plans, photos** are **online-only** direct REST (`ProjectRepo`/`FloorPlanRepo` have no outbox; create/update/delete call `ApiService` then cache the response, surfacing `error` on failure). Full CRUD exists everywhere except: floor plans are delete-only (no server PATCH — name set at upload). Deletes go through a shared `ConfirmDialog`. Note: the issue `item` field is client/local-only — it's not in the server's `/api/sync` whitelist or REST body, so edits to it don't round-trip to the backend.
 - **Manual DI** — `AppContainer` class, built once per platform; no Hilt/Koin
 - **Single `floorpin.sq` file** — all SQLDelight schema + queries in one file (7 tables, full CRUD + upserts)
 - **HTML→PDF via WebView** — report export builds HTML in Kotlin, renders in platform WebView, prints via PrintDocumentAdapter. Images are pre-fetched through the auth'd Ktor client and embedded as base64 data URIs (avoids WebView auth/CORS/ORB issues). JS image-load detection via `@JavascriptInterface` waits for all `<img>` elements to settle before printing. WebView is briefly attached to the decor view (1×1 px invisible) so layout completes.
@@ -81,8 +82,10 @@ Android (ReportExporter.android.kt):
   └─> WebView.loadDataWithBaseURL(baseUrl, html, ...)
       ├─> settings: JS enabled, MIXED_CONTENT_ALWAYS_ALLOW, LOAD_NO_CACHE
       ├─> @JavascriptInterface onImagesReady() → waits for all <img> complete
-      ├─> printManager.print() with createPrintDocumentAdapter()
-      └─> Cleanup: detach + destroy after 3s delay
+      ├─> printManager.print() with a delegating PrintDocumentAdapter
+      └─> Cleanup: detach + destroy in adapter.onFinish() (NOT a timer — a
+          fixed delay races the system print dialog; if the user takes too long
+          to tap Save the WebView is gone and the save fails)
 
 iOS (ReportExporter.ios.kt):
   └─> Stub (no-op)
@@ -96,7 +99,7 @@ iOS (ReportExporter.ios.kt):
 ### Files
 | File | Role |
 |------|------|
-| `ui/screens/ReportScreen.kt` | Report UI, `exportPdf()`, `buildReportHtml()` |
+| `ui/screens/ReportScreen.kt` | Report UI, `exportPdf()`, `buildReportHtml()`. Page 1 = summary + plan image with every location pin & issue dot overlaid (positioned by their `x`/`y` percentages, colored by worst status); each location's issues then start on their own page (`page-break-before`). Per-issue block mirrors the Snag Assure layout: `#shortid - title`, status/priority badges, assigned-to, category·type, item, location, created date, `x/y` coords + primary photo top-right, remaining photos in a bordered gallery. Fields absent from our model (due date, cost, creator name) are omitted. |
 | `ui/ReportExporter.kt` | `expect fun rememberReportExporter()` |
 | `androidMain/.../ReportExporter.android.kt` | WebView + PrintManager, JS bridge |
 | `iosMain/.../ReportExporter.ios.kt` | Stub |

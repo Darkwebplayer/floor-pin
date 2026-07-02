@@ -200,7 +200,7 @@ fun ViewerScreen(
                     onSelectIssue = { selectedIssueId = it },
                     onClose = { selectedLocId = null; selectedIssueId = null },
                     modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-                        .fillMaxHeight(0.6f),
+                        .fillMaxHeight(0.85f),
                 )
             }
         }

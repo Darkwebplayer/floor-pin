@@ -125,6 +125,8 @@ upsertIssue:
 INSERT OR REPLACE INTO issue(id, locationId, title, description, status, priority, type, x, y, createdAt, updatedAt, resolvedAt, category, item, assignedTo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 updateIssueStatus:
 UPDATE issue SET status = ?, resolvedAt = ?, updatedAt = ? WHERE id = ?;
+updateIssueDetails:
+UPDATE issue SET title = ?, description = ?, priority = ?, type = ?, category = ?, item = ?, updatedAt = ? WHERE id = ?;
 moveIssue:
 UPDATE issue SET x = ?, y = ?, updatedAt = ? WHERE id = ?;
 deleteIssue:

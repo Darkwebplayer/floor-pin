@@ -74,6 +74,14 @@ class ApiService(private val client: HttpClient) {
             contentType(ContentType.Application.Json)
             setBody(buildJsonObject { put("name", name); if (description != null) put("description", description) })
         }.body()
+    suspend fun updateProject(id: String, name: String?, description: String?): ProjectDto =
+        client.patch("$BASE/api/projects/$id") {
+            contentType(ContentType.Application.Json)
+            setBody(buildJsonObject {
+                if (name != null) put("name", name)
+                if (description != null) put("description", description)
+            })
+        }.body()
     suspend fun deleteProject(id: String) { client.delete("$BASE/api/projects/$id") }
 
     // ── floor plans ──
