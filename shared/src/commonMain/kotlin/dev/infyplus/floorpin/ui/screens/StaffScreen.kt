@@ -35,6 +35,8 @@ import dev.infyplus.floorpin.ui.components.Avatar
 import dev.infyplus.floorpin.ui.components.ButtonVariant
 import dev.infyplus.floorpin.ui.components.AppTopBar
 import dev.infyplus.floorpin.ui.components.initialsOf
+import dev.infyplus.floorpin.ui.components.rememberValidator
+import dev.infyplus.floorpin.ui.components.validateEmail
 import dev.infyplus.floorpin.ui.theme.Accent
 import dev.infyplus.floorpin.ui.theme.BorderColor
 import dev.infyplus.floorpin.ui.theme.Ink
@@ -139,15 +141,25 @@ private fun RoleChip(label: String, on: Boolean, onClick: () -> Unit) {
 private fun InviteCard(vm: StaffViewModel) {
     var email by remember { mutableStateOf("") }
     var role by remember { mutableStateOf("staff") }
+    val validator = rememberValidator()
     AppCard(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Invite a staff member", style = MaterialTheme.typography.titleLarge, color = Ink)
-            AppTextField(email, { email = it }, label = "Email address", placeholder = "name@company.com")
+            AppTextField(
+                email, { email = it; validator.clearField("email") },
+                label = "Email address", placeholder = "name@company.com",
+                isError = validator.hasError("email"),
+                supportingText = validator.errorFor("email"),
+                required = true,
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 RoleChip("Staff", role == "staff") { role = "staff" }
                 RoleChip("Admin", role == "admin") { role = "admin" }
             }
-            AppButton("Send invite", onClick = { if (email.isNotBlank()) { vm.invite(email.trim().lowercase(), role); email = "" } })
+            AppButton("Send invite", onClick = {
+                validator.validate("email" to validateEmail(email.trim().lowercase()))
+                if (validator.valid) { vm.invite(email.trim().lowercase(), role); email = ""; validator.clearAll() }
+            })
             Text("They'll get a Google Sign-In scoped to assigned projects.", color = Muted, style = MaterialTheme.typography.labelSmall)
         }
     }

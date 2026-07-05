@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material3.AlertDialog
@@ -38,6 +39,8 @@ import dev.infyplus.floorpin.ui.components.AppTopBar
 import dev.infyplus.floorpin.ui.components.ButtonVariant
 import dev.infyplus.floorpin.ui.components.CardMenu
 import dev.infyplus.floorpin.ui.components.ConfirmDialog
+import dev.infyplus.floorpin.ui.components.rememberValidator
+import dev.infyplus.floorpin.ui.components.validateRequired
 import dev.infyplus.floorpin.ui.theme.Muted
 import dev.infyplus.floorpin.ui.theme.SurfaceWarm
 import kotlinx.coroutines.flow.SharingStarted
@@ -101,6 +104,11 @@ fun ProjectsScreen(
             horizontalArrangement = Arrangement.spacedBy(20.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
+            vm.error?.let { error ->
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+            }
             items(projects, key = { it.id }) { p ->
                 AppCard(elevated = true, modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp)) {
                     Column(Modifier.padding(20.dp).fillMaxWidth(), Arrangement.spacedBy(8.dp)) {
@@ -146,17 +154,29 @@ private fun ProjectDialog(
 ) {
     var name by remember { mutableStateOf(initialName) }
     var desc by remember { mutableStateOf(initialDesc) }
+    val validator = rememberValidator()
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                AppTextField(name, { name = it }, label = "Project name", placeholder = "e.g. Northbridge FM")
+                AppTextField(
+                    name, { name = it; validator.clearField("name") },
+                    label = "Project name", placeholder = "e.g. Northbridge FM",
+                    isError = validator.hasError("name"),
+                    supportingText = validator.errorFor("name"),
+                    required = true,
+                )
                 AppTextField(desc, { desc = it }, label = "Description", placeholder = "Optional")
             }
         },
         confirmButton = {
-            AppButton("Save", onClick = { if (name.isNotBlank()) onSave(name.trim(), desc.trim().ifBlank { null }) })
+            AppButton("Save", onClick = {
+                val n = name.trim()
+                validator.validate("name" to validateRequired(n, "Project name"))
+                if (validator.valid) onSave(n, desc.trim().ifBlank { null })
+            })
         },
         dismissButton = { AppButton("Cancel", onClick = onDismiss, variant = ButtonVariant.Neutral) },
     )

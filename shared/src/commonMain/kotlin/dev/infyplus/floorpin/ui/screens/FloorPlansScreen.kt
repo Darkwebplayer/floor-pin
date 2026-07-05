@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material3.AlertDialog
@@ -42,6 +43,9 @@ import dev.infyplus.floorpin.ui.components.AppTopBar
 import dev.infyplus.floorpin.ui.components.ButtonVariant
 import dev.infyplus.floorpin.ui.components.CardMenu
 import dev.infyplus.floorpin.ui.components.ConfirmDialog
+import dev.infyplus.floorpin.ui.components.rememberValidator
+import dev.infyplus.floorpin.ui.components.validateFileRequired
+import dev.infyplus.floorpin.ui.components.validateRequired
 import dev.infyplus.floorpin.ui.rememberImagePicker
 import dev.infyplus.floorpin.ui.theme.Muted
 import dev.infyplus.floorpin.ui.theme.SurfaceWarm
@@ -107,6 +111,11 @@ fun FloorPlansScreen(
             horizontalArrangement = Arrangement.spacedBy(20.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
+            vm.error?.let { error ->
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+            }
             items(plans, key = { it.id }) { fp ->
                 AppCard(elevated = true, modifier = Modifier.fillMaxWidth()) {
                     Column {
@@ -156,19 +165,29 @@ private fun AddFloorPlanDialog(
     var name by remember { mutableStateOf("") }
     var picked by remember { mutableStateOf<Pair<ByteArray, String>?>(null) }
     val pick = rememberImagePicker { bytes, fileName -> picked = bytes to fileName }
+    val validator = rememberValidator()
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Add a floor plan") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                AppTextField(name, { name = it }, label = "Plan name", placeholder = "e.g. Level 3")
+                AppTextField(
+                    name, { name = it; validator.clearField("name") },
+                    label = "Plan name", placeholder = "e.g. Level 3",
+                    isError = validator.hasError("name"),
+                    supportingText = validator.errorFor("name"),
+                    required = true,
+                )
                 AppButton(
                     if (picked != null) "Image selected ✓" else "Choose floor-plan image",
-                    onClick = pick,
+                    onClick = { pick(); validator.clearField("file") },
                     variant = ButtonVariant.Neutral,
                     leadingIcon = AppIcons.Upload,
                 )
+                validator.errorFor("file")?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
             }
         },
         confirmButton = {
@@ -176,7 +195,12 @@ private fun AddFloorPlanDialog(
                 if (uploading) "Uploading…" else "Create & open",
                 onClick = {
                     val p = picked
-                    if (name.isNotBlank() && p != null && !uploading) onCreate(name.trim(), p.first, p.second)
+                    val n = name.trim()
+                    validator.validate(
+                        "name" to validateRequired(n, "Plan name"),
+                        "file" to validateFileRequired(p?.first),
+                    )
+                    if (validator.valid && !uploading) onCreate(n, p!!.first, p.second)
                 },
             )
         },

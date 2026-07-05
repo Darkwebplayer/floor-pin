@@ -21,6 +21,8 @@ dependencies {
     implementation(libs.androidx.credentials.playServices)
     implementation(libs.google.identity.googleid)
 
+    implementation("androidx.core:core-splashscreen:1.0.1")
+
     implementation(libs.compose.uiToolingPreview)
     debugImplementation(libs.compose.uiTooling)
 }

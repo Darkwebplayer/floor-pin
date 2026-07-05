@@ -43,9 +43,13 @@ import dev.infyplus.floorpin.data.remote.ActivityLogDto
 import dev.infyplus.floorpin.db.Issue
 import dev.infyplus.floorpin.db.Location
 import dev.infyplus.floorpin.db.Photo
+import dev.infyplus.floorpin.domain.IssueCategory
+import dev.infyplus.floorpin.domain.IssueItem
 import dev.infyplus.floorpin.domain.IssuePriority
 import dev.infyplus.floorpin.domain.IssueStatus
+import dev.infyplus.floorpin.domain.IssueType
 import dev.infyplus.floorpin.ui.components.AppButton
+import dev.infyplus.floorpin.ui.components.AppDropdown
 import dev.infyplus.floorpin.ui.components.AppIcons
 import dev.infyplus.floorpin.ui.components.AppTextField
 import dev.infyplus.floorpin.ui.components.ButtonVariant
@@ -53,6 +57,8 @@ import dev.infyplus.floorpin.ui.components.ConfirmDialog
 import dev.infyplus.floorpin.ui.components.ImageLightbox
 import dev.infyplus.floorpin.ui.components.StatusBadge
 import dev.infyplus.floorpin.ui.components.photoImageUrl
+import dev.infyplus.floorpin.ui.components.rememberValidator
+import dev.infyplus.floorpin.ui.components.validateRequired
 import dev.infyplus.floorpin.ui.components.rememberPhotoMarker
 import dev.infyplus.floorpin.ui.rememberCameraCapture
 import dev.infyplus.floorpin.ui.rememberImagePicker
@@ -100,6 +106,9 @@ fun Inspector(
                     Box(contentAlignment = Alignment.Center) { Icon(AppIcons.Close, "Close", Modifier.size(16.dp), tint = Ink) }
                 }
             }
+            vm.error?.let { err ->
+                Text(err, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 20.dp).padding(bottom = 8.dp))
+            }
 
             when {
                 location == null -> EmptyHint()
@@ -128,6 +137,7 @@ private fun LocationDetail(vm: ViewerViewModel, location: Location, issues: List
     var showAdd by remember { mutableStateOf(false) }
     var tab by remember(location.id) { mutableStateOf(0) }
     var confirmDelete by remember { mutableStateOf(false) }
+    val validator = rememberValidator()
 
     // Commit the name once, when this pin's inspector closes (Done, tap-away, or switching pins) —
     // not on every keystroke. Only writes if the name actually changed.
@@ -142,7 +152,13 @@ private fun LocationDetail(vm: ViewerViewModel, location: Location, issues: List
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
             // editable name + inline delete (Done lives in the header ✕)
             Row(verticalAlignment = Alignment.CenterVertically) {
-                AppTextField(name, { name = it }, label = "Location name", modifier = Modifier.weight(1f))
+                AppTextField(
+                    name, { name = it; validator.clearField("name") },
+                    label = "Location name", modifier = Modifier.weight(1f),
+                    isError = validator.hasError("name"),
+                    supportingText = validator.errorFor("name"),
+                    required = true,
+                )
                 Surface(onClick = { confirmDelete = true }, color = Color.Transparent, shape = CircleShape, modifier = Modifier.padding(start = 8.dp).size(40.dp)) {
                     Box(contentAlignment = Alignment.Center) { Icon(AppIcons.Trash, "Remove location", Modifier.size(20.dp), tint = Danger) }
                 }
@@ -263,9 +279,9 @@ private fun IssueDetail(vm: ViewerViewModel, location: Location, issue: Issue, o
 
     val meta = listOfNotNull(
         "Priority" to IssuePriority.fromWire(issue.priority).label,
-        issue.type?.takeIf { it.isNotBlank() }?.let { "Type" to it },
-        issue.category?.takeIf { it.isNotBlank() }?.let { "Category" to it },
-        issue.item?.takeIf { it.isNotBlank() }?.let { "Item" to it },
+        IssueType.labelFor(issue.type)?.let { "Type" to it },
+        IssueCategory.labelFor(issue.category)?.let { "Category" to it },
+        IssueItem.labelFor(issue.item)?.let { "Item" to it },
     )
 
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
@@ -353,27 +369,36 @@ private fun EditIssueDialog(
 ) {
     var title by remember { mutableStateOf(issue.title) }
     var desc by remember { mutableStateOf(issue.description ?: "") }
-    var type by remember { mutableStateOf(issue.type ?: "") }
-    var category by remember { mutableStateOf(issue.category ?: "") }
-    var item by remember { mutableStateOf(issue.item ?: "") }
+    var type by remember { mutableStateOf(issue.type) }
+    var category by remember { mutableStateOf(issue.category) }
+    var item by remember { mutableStateOf(issue.item) }
     var priority by remember { mutableStateOf(IssuePriority.fromWire(issue.priority)) }
+    val validator = rememberValidator()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Edit issue") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                AppTextField(title, { title = it }, label = "Issue title")
+                AppTextField(
+                    title, { title = it; validator.clearField("title") },
+                    label = "Issue title",
+                    isError = validator.hasError("title"),
+                    supportingText = validator.errorFor("title"),
+                    required = true,
+                )
                 AppTextField(desc, { desc = it }, label = "Description", singleLine = false)
-                AppTextField(type, { type = it }, label = "Type")
-                AppTextField(category, { category = it }, label = "Category")
-                AppTextField(item, { item = it }, label = "Item")
+                AppDropdown(type, IssueType.options, { type = it }, label = "Type")
+                AppDropdown(category, IssueCategory.options, { category = it }, label = "Category")
+                AppDropdown(item, IssueItem.options, { item = it }, label = "Item")
                 Text("Priority", style = MaterialTheme.typography.bodySmall, color = Muted)
                 PriorityChips(priority) { priority = it }
             }
         },
         confirmButton = {
             AppButton("Save", onClick = {
-                if (title.isNotBlank()) onSave(title.trim(), desc.trim().ifBlank { null }, priority, type.trim().ifBlank { null }, category.trim().ifBlank { null }, item.trim().ifBlank { null })
+                val t = title.trim()
+                validator.validate("title" to validateRequired(t, "Issue title"))
+                if (validator.valid) onSave(t, desc.trim().ifBlank { null }, priority, type, category, item)
             })
         },
         dismissButton = { AppButton("Cancel", onClick = onDismiss, variant = ButtonVariant.Neutral) },
@@ -419,13 +444,14 @@ internal fun AddIssueDialog(
     var step by remember { mutableStateOf(0) }
     var title by remember { mutableStateOf("") }
     var desc by remember { mutableStateOf("") }
-    var type by remember { mutableStateOf("Architectural") }
-    var category by remember { mutableStateOf("Architectural") }
-    var item by remember { mutableStateOf("General Snag") }
+    var type by remember { mutableStateOf(IssueType.options.first().value) }
+    var category by remember { mutableStateOf(IssueCategory.options.first().value) }
+    var item by remember { mutableStateOf(IssueItem.options.first().value) }
     var status by remember { mutableStateOf(IssueStatus.OPEN) }
     var priority by remember { mutableStateOf(IssuePriority.MEDIUM) }
     var photoBytes by remember { mutableStateOf<ByteArray?>(null) }
     var photoName by remember { mutableStateOf<String?>(null) }
+    val validator = rememberValidator()
     val annotate = rememberPhotoMarker()
     val pickGallery = rememberImagePicker { bytes, name ->
         annotate(bytes, name) { result ->
@@ -444,11 +470,17 @@ internal fun AddIssueDialog(
         text = {
             if (step == 0) {
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    AppTextField(title, { title = it }, label = "Issue title", placeholder = "e.g. Sink not working")
+                    AppTextField(
+                        title, { title = it; validator.clearField("title") },
+                        label = "Issue title", placeholder = "e.g. Sink not working",
+                        isError = validator.hasError("title"),
+                        supportingText = validator.errorFor("title"),
+                        required = true,
+                    )
                     AppTextField(desc, { desc = it }, label = "Description", placeholder = "What's wrong…", singleLine = false)
-                    AppTextField(type, { type = it }, label = "Type", placeholder = "e.g. Plumbing")
-                    AppTextField(category, { category = it }, label = "Category", placeholder = "e.g. Snagging")
-                    AppTextField(item, { item = it }, label = "Item", placeholder = "e.g. General Snag")
+                    AppDropdown(type, IssueType.options, { type = it }, label = "Type")
+                    AppDropdown(category, IssueCategory.options, { category = it }, label = "Category")
+                    AppDropdown(item, IssueItem.options, { item = it }, label = "Item")
                     Text("Status", style = MaterialTheme.typography.bodySmall, color = Muted)
                     StatusChips(status) { status = it }
                     Text("Priority", style = MaterialTheme.typography.bodySmall, color = Muted)
@@ -474,10 +506,13 @@ internal fun AddIssueDialog(
         },
         confirmButton = {
             if (step == 0) {
-                AppButton("Next", onClick = { if (title.isNotBlank()) step = 1 })
+                AppButton("Next", onClick = {
+                    validator.validate("title" to validateRequired(title, "Issue title"))
+                    if (validator.valid) step = 1
+                })
             } else {
                 AppButton("Save issue", onClick = {
-                    onCreate(title.trim(), desc.trim().ifBlank { null }, status, priority, type.trim().ifBlank { null }, category.trim().ifBlank { null }, item.trim().ifBlank { null }, photoBytes, photoName)
+                    onCreate(title.trim(), desc.trim().ifBlank { null }, status, priority, type, category, item, photoBytes, photoName)
                 })
             }
         },
