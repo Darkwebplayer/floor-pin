@@ -1,3 +1,11 @@
+# Floor Pin
+
+App to manage building plans and record and report issues and defects.
+
+[**⬇ Download latest release**](https://github.com/Darkwebplayer/floor-pin/releases/latest)
+
+---
+
 This is a Kotlin Multiplatform project targeting Android, iOS.
 
 * [/iosApp](./iosApp/iosApp) contains an iOS application. Even if you’re sharing your UI with Compose Multiplatform,
