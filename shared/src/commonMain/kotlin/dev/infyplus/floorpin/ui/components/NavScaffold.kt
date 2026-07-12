@@ -1,6 +1,13 @@
 package dev.infyplus.floorpin.ui.components
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,26 +22,31 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Icon
-import androidx.compose.material3.ModalDrawerSheet
-import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.infyplus.floorpin.ui.theme.Accent
+import dev.infyplus.floorpin.ui.theme.DarkModeOverride
 import dev.infyplus.floorpin.ui.theme.Ink
 import dev.infyplus.floorpin.ui.theme.White
-import kotlinx.coroutines.launch
+import floorpin.shared.generated.resources.Res
+import floorpin.shared.generated.resources.brand_logo
+import org.jetbrains.compose.resources.painterResource
 
 data class NavItem(val label: String, val icon: ImageVector, val selected: Boolean, val onClick: () -> Unit)
 
@@ -58,23 +70,32 @@ fun NavScaffold(
                 Box(Modifier.weight(1f).fillMaxHeight()) { content(null) }
             }
         } else {
-            val drawerState = rememberDrawerState(DrawerValue.Closed)
-            val scope = rememberCoroutineScope()
-            ModalNavigationDrawer(
-                drawerState = drawerState,
-                gesturesEnabled = false, // hamburger-only; edge-swipe conflicts with canvas pan
-                drawerContent = {
-                    ModalDrawerSheet(drawerContainerColor = Ink) {
+            // Custom off-canvas drawer: hamburger-only (no edge-swipe, which conflicts
+            // with canvas pan) but tap-outside on the scrim dismisses it.
+            var open by remember { mutableStateOf(false) }
+            Box(Modifier.fillMaxSize()) {
+                content { open = true }
+                AnimatedVisibility(open, enter = fadeIn(), exit = fadeOut()) {
+                    Box(
+                        Modifier.fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.32f))
+                            .pointerInput(Unit) { detectTapGestures { open = false } },
+                    )
+                }
+                AnimatedVisibility(
+                    open,
+                    enter = slideInHorizontally { -it },
+                    exit = slideOutHorizontally { -it },
+                ) {
+                    Surface(color = Ink, modifier = Modifier.width(268.dp).fillMaxHeight()) {
                         Sidebar(
-                            items.map { it.copy(onClick = { it.onClick(); scope.launch { drawerState.close() } }) },
+                            items.map { it.copy(onClick = { it.onClick(); open = false }) },
                             userName, userRole,
-                            { onSignOut(); scope.launch { drawerState.close() } },
+                            { onSignOut(); open = false },
                             Modifier.width(268.dp).fillMaxHeight(),
                         )
                     }
-                },
-            ) {
-                content { scope.launch { drawerState.open() } }
+                }
             }
         }
     }
@@ -95,9 +116,7 @@ private fun Sidebar(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 24.dp),
         ) {
-            Box(Modifier.size(34.dp).background(Accent, RoundedCornerShape(6.dp)), Alignment.Center) {
-                Icon(AppIcons.Pin, null, Modifier.size(18.dp), tint = White)
-            }
+            Image(painterResource(Res.drawable.brand_logo), null, Modifier.size(34.dp))
             Text(buildBrand(), color = White, fontSize = 22.sp, fontWeight = FontWeight.Light)
         }
         Text(
@@ -109,6 +128,7 @@ private fun Sidebar(
         )
         items.forEach { NavRow(it) }
         Spacer(Modifier.weight(1f))
+        DarkModeRow()
         NavRow(NavItem("Sign out", AppIcons.SignOut, false, onSignOut))
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -121,6 +141,24 @@ private fun Sidebar(
                 Text(userRole, color = White.copy(alpha = 0.5f), fontSize = 12.sp)
             }
         }
+    }
+}
+
+@Composable
+private fun DarkModeRow() {
+    var dark by DarkModeOverride
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 12.dp),
+    ) {
+        Icon(AppIcons.Map, null, Modifier.size(18.dp), tint = White.copy(alpha = 0.78f))
+        Spacer(Modifier.width(12.dp))
+        Text("Dark mode", color = White.copy(alpha = 0.78f), fontSize = 14.sp, modifier = Modifier.weight(1f))
+        Switch(
+            checked = dark,
+            onCheckedChange = { dark = it },
+            colors = SwitchDefaults.colors(checkedTrackColor = Accent),
+        )
     }
 }
 

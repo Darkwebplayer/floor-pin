@@ -50,6 +50,14 @@ actual fun rememberReportExporter(): (html: String, jobName: String, baseUrl: St
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                         safeBrowsingEnabled = false
                     }
+                    // Keep the report light on dark-mode phones — no auto-darkening.
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        isAlgorithmicDarkeningAllowed = false
+                    }
+                }
+                @Suppress("DEPRECATION")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    isForceDarkAllowed = false
                 }
 
                 addJavascriptInterface(object {

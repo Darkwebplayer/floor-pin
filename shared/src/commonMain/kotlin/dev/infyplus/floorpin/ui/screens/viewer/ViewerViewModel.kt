@@ -31,6 +31,8 @@ class ViewerViewModel(
 
     var floorPlan by mutableStateOf<FloorPlan?>(null); private set
     var error by mutableStateOf<String?>(null); private set
+    var refreshing by mutableStateOf(false); private set
+    var uploading by mutableStateOf(false); private set
 
     init {
         viewModelScope.launch { floorPlan = container.data.floorPlans.byId(floorPlanId) }
@@ -38,6 +40,7 @@ class ViewerViewModel(
     }
 
     fun refresh() = viewModelScope.launch {
+        refreshing = true; error = null
         runCatching {
             val dto = container.api.floorPlan(floorPlanId)
             container.data.floorPlans.cacheOne(dto.toRow())
@@ -51,6 +54,7 @@ class ViewerViewModel(
                 }
             }
         }.onFailure { error = it.message }
+        refreshing = false
     }
 
     fun observePhotos(issueId: String): Flow<List<Photo>> = container.data.issues.observePhotos(issueId)
@@ -76,13 +80,13 @@ class ViewerViewModel(
     fun addIssue(locationId: String, title: String, desc: String?, status: IssueStatus, priority: IssuePriority, type: String? = null, category: String? = null, item: String? = null, x: Double? = null, y: Double? = null): Issue =
         container.data.issues.create(locationId, title, desc, status, priority, type, category, item, x, y).also { container.sync.requestSync() }
 
-    /** Create the issue (offline-ok) then upload an optional photo (online-only, separate endpoint). */
+    /** Create the issue (offline-ok) then upload optional photos (online-only, separate endpoint). */
     fun addIssueWithPhoto(
         locationId: String, title: String, desc: String?, status: IssueStatus, priority: IssuePriority,
-        type: String?, category: String?, item: String?, x: Double?, y: Double?, photoBytes: ByteArray?, photoName: String?,
+        type: String?, category: String?, item: String?, x: Double?, y: Double?, photos: List<Pair<ByteArray, String>>,
     ) {
         val issue = addIssue(locationId, title, desc, status, priority, type, category, item, x, y)
-        if (photoBytes != null && photoName != null) uploadPhoto(issue.id, photoBytes, photoName)
+        photos.forEach { (bytes, name) -> uploadPhoto(issue.id, bytes, name) }
     }
     fun setIssueStatus(id: String, status: IssueStatus) {
         container.data.issues.updateStatus(id, status); container.sync.requestSync()
@@ -91,9 +95,11 @@ class ViewerViewModel(
         container.data.issues.update(id, title, desc, priority, type, category, item); container.sync.requestSync()
     }
     fun deletePhoto(photoId: String) = viewModelScope.launch {
+        uploading = true; error = null
         runCatching { container.api.deletePhoto(photoId) }
             .onSuccess { container.data.issues.deletePhoto(photoId) }
             .onFailure { error = it.message }
+        uploading = false
     }
     fun moveIssue(id: String, x: Double, y: Double) {
         container.data.issues.move(id, x, y); container.sync.requestSync()
@@ -102,8 +108,10 @@ class ViewerViewModel(
         container.data.issues.delete(id); container.sync.requestSync()
     }
     fun uploadPhoto(issueId: String, bytes: ByteArray, fileName: String) = viewModelScope.launch {
+        uploading = true; error = null
         runCatching { container.api.uploadPhoto(issueId, bytes, fileName) }
             .onSuccess { container.data.issues.upsertPhotos(listOf(it.toRow())) }
             .onFailure { error = it.message }
+        uploading = false
     }
 }

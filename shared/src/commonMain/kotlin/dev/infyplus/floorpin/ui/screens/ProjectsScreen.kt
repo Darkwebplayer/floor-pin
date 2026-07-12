@@ -51,14 +51,18 @@ class ProjectsViewModel(private val container: AppContainer) : ViewModel() {
     val projects = container.data.projects.observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     var error by mutableStateOf<String?>(null); private set
+    var refreshing by mutableStateOf(false); private set
 
     fun refresh() = viewModelScope.launch {
+        refreshing = true; error = null
         runCatching { container.api.projects() }
             .onSuccess { dtos -> container.data.projects.upsertFromServer(dtos.map { it.toRow() }) }
             .onFailure { error = it.message }
+        refreshing = false
     }
 
     fun create(name: String, description: String?, onCreated: (Project) -> Unit) = viewModelScope.launch {
+        error = null
         runCatching { container.api.createProject(name, description) }
             .onSuccess { dto ->
                 val row = dto.toRow()
@@ -69,12 +73,14 @@ class ProjectsViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun update(id: String, name: String, description: String?) = viewModelScope.launch {
+        error = null
         runCatching { container.api.updateProject(id, name, description) }
             .onSuccess { container.data.projects.upsertFromServer(listOf(it.toRow())) }
             .onFailure { error = it.message }
     }
 
     fun delete(id: String) = viewModelScope.launch {
+        error = null
         runCatching { container.api.deleteProject(id) }
             .onSuccess { container.data.projects.remove(id) }
             .onFailure { error = it.message }
@@ -92,6 +98,8 @@ fun ProjectsScreen(
     var showAdd by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<Project?>(null) }
     var deleting by remember { mutableStateOf<Project?>(null) }
+    var saving by remember { mutableStateOf(false) }
+    var deletingLoading by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { vm.refresh() } // refetch each time the screen is entered
 
     Column(Modifier.fillMaxSize().background(SurfaceWarm)) {
@@ -107,6 +115,16 @@ fun ProjectsScreen(
             vm.error?.let { error ->
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            if (vm.refreshing) {
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    Text("Loading projects…", color = Muted, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+            if (!vm.refreshing && projects.isEmpty()) {
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    Text("No projects yet — create one to get started.", color = Muted, style = MaterialTheme.typography.bodyMedium)
                 }
             }
             items(projects, key = { it.id }) { p ->
@@ -125,20 +143,36 @@ fun ProjectsScreen(
     }
 
     if (showAdd) {
-        ProjectDialog(title = "New project", onDismiss = { showAdd = false }) { name, desc ->
-            showAdd = false; vm.create(name, desc) { onOpenProject(it) }
+        ProjectDialog(
+            title = "New project",
+            saving = saving,
+            onDismiss = { showAdd = false }
+        ) { name, desc ->
+            saving = true
+            vm.create(name, desc) { showAdd = false; saving = false; onOpenProject(it) }
         }
     }
     editing?.let { p ->
-        ProjectDialog(title = "Edit project", initialName = p.name, initialDesc = p.description ?: "", onDismiss = { editing = null }) { name, desc ->
-            editing = null; vm.update(p.id, name, desc)
+        ProjectDialog(
+            title = "Edit project", initialName = p.name, initialDesc = p.description ?: "",
+            saving = saving,
+            onDismiss = { editing = null }
+        ) { name, desc ->
+            saving = true
+            vm.update(p.id, name, desc)
+            editing = null; saving = false
         }
     }
     deleting?.let { p ->
         ConfirmDialog(
             title = "Delete project?",
             message = "\"${p.name}\" and all its floor plans, locations, issues and photos will be permanently deleted.",
-            onConfirm = { vm.delete(p.id) },
+            loading = deletingLoading,
+            onConfirm = {
+                deletingLoading = true
+                vm.delete(p.id)
+                deleting = null; deletingLoading = false
+            },
             onDismiss = { deleting = null },
         )
     }
@@ -149,6 +183,7 @@ private fun ProjectDialog(
     title: String,
     initialName: String = "",
     initialDesc: String = "",
+    saving: Boolean = false,
     onDismiss: () -> Unit,
     onSave: (String, String?) -> Unit,
 ) {
@@ -157,7 +192,7 @@ private fun ProjectDialog(
     val validator = rememberValidator()
 
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = if (saving) ({}) else onDismiss,
         title = { Text(title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -172,12 +207,12 @@ private fun ProjectDialog(
             }
         },
         confirmButton = {
-            AppButton("Save", onClick = {
+            AppButton(if (saving) "Saving…" else "Save", loading = saving, onClick = {
                 val n = name.trim()
                 validator.validate("name" to validateRequired(n, "Project name"))
                 if (validator.valid) onSave(n, desc.trim().ifBlank { null })
             })
         },
-        dismissButton = { AppButton("Cancel", onClick = onDismiss, variant = ButtonVariant.Neutral) },
+        dismissButton = { AppButton("Cancel", onClick = onDismiss, variant = ButtonVariant.Neutral, enabled = !saving) },
     )
 }

@@ -49,26 +49,38 @@ class StaffViewModel(private val container: AppContainer) : ViewModel() {
     var users by mutableStateOf<List<UserDto>>(emptyList()); private set
     var allowlist by mutableStateOf<List<AllowlistEntry>>(emptyList()); private set
     var error by mutableStateOf<String?>(null); private set
+    var refreshing by mutableStateOf(false); private set
+    var loading by mutableStateOf(false); private set
 
     init { refresh() }
 
     fun refresh() = viewModelScope.launch {
+        refreshing = true; error = null
         runCatching { container.api.users() }.onSuccess { users = it }.onFailure { error = it.message }
         runCatching { container.api.allowlist() }.onSuccess { allowlist = it }
+        refreshing = false
     }
 
     fun setRole(userId: String, role: String) = viewModelScope.launch {
+        loading = true; error = null
         runCatching { container.api.setRole(userId, role) }.onSuccess { refresh() }.onFailure { error = it.message }
+        loading = false
     }
     fun toggleBan(user: UserDto) = viewModelScope.launch {
+        loading = true; error = null
         runCatching { if (user.banned == true) container.api.unban(user.id) else container.api.ban(user.id) }
             .onSuccess { refresh() }.onFailure { error = it.message }
+        loading = false
     }
     fun invite(email: String, role: String) = viewModelScope.launch {
+        loading = true; error = null
         runCatching { container.api.addAllowlist(email, role) }.onSuccess { refresh() }.onFailure { error = it.message }
+        loading = false
     }
     fun uninvite(email: String) = viewModelScope.launch {
+        loading = true; error = null
         runCatching { container.api.removeAllowlist(email) }.onSuccess { refresh() }.onFailure { error = it.message }
+        loading = false
     }
 }
 
@@ -88,6 +100,9 @@ fun StaffScreen(container: AppContainer, currentUser: UserDto, openDrawer: (() -
                     }
                 }
             }
+            if (vm.refreshing) {
+                item { Text("Loading…", color = Muted, style = MaterialTheme.typography.bodyMedium) }
+            }
             items(vm.users, key = { it.id }) { user -> UserRow(user, vm, currentUser.id, adminCount) }
             item { InviteCard(vm) }
             if (vm.allowlist.isNotEmpty()) {
@@ -96,7 +111,7 @@ fun StaffScreen(container: AppContainer, currentUser: UserDto, openDrawer: (() -
                     AppCard(modifier = Modifier.fillMaxWidth()) {
                         Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Column { Text(entry.email, color = Ink); Text(entry.role, color = Muted, style = MaterialTheme.typography.labelSmall) }
-                            AppButton("Remove", onClick = { vm.uninvite(entry.email) }, small = true, variant = ButtonVariant.Danger)
+                            AppButton("Remove", onClick = { vm.uninvite(entry.email) }, small = true, variant = ButtonVariant.Danger, loading = vm.loading)
                         }
                     }
                 }
@@ -121,18 +136,18 @@ private fun UserRow(user: UserDto, vm: StaffViewModel, currentUserId: String, ad
                 Text(if (isSelf) "${user.name ?: "—"} (you)" else user.name ?: "—", color = Ink)
                 Text(user.email ?: "", color = Muted, style = MaterialTheme.typography.labelSmall)
             }
-            RoleChip("Admin", isAdmin) { if (canChangeRole) vm.setRole(user.id, "admin") }
-            RoleChip("Staff", user.role.equals("staff", true) || user.role == null) { if (canChangeRole) vm.setRole(user.id, "staff") }
+            RoleChip("Admin", isAdmin, vm.loading) { if (canChangeRole) vm.setRole(user.id, "admin") }
+            RoleChip("Staff", user.role.equals("staff", true) || user.role == null, vm.loading) { if (canChangeRole) vm.setRole(user.id, "staff") }
             if (canBan) {
-                AppButton(if (user.banned == true) "Unban" else "Ban", onClick = { vm.toggleBan(user) }, small = true, variant = ButtonVariant.Danger)
+                AppButton(if (user.banned == true) "Unban" else "Ban", onClick = { vm.toggleBan(user) }, small = true, variant = ButtonVariant.Danger, loading = vm.loading)
             }
         }
     }
 }
 
 @Composable
-private fun RoleChip(label: String, on: Boolean, onClick: () -> Unit) {
-    Surface(onClick = onClick, shape = RoundedCornerShape(99.dp), color = if (on) Accent else White, contentColor = if (on) White else Ink, border = androidx.compose.foundation.BorderStroke(1.dp, if (on) Accent else BorderColor)) {
+private fun RoleChip(label: String, on: Boolean, loading: Boolean = false, onClick: () -> Unit) {
+    Surface(onClick = { if (!loading) onClick() }, shape = RoundedCornerShape(99.dp), color = if (on) Accent else White, contentColor = if (on) White else Ink, border = androidx.compose.foundation.BorderStroke(1.dp, if (on) Accent else BorderColor)) {
         Text(label, Modifier.padding(horizontal = 12.dp, vertical = 6.dp), style = MaterialTheme.typography.labelSmall)
     }
 }
@@ -156,7 +171,7 @@ private fun InviteCard(vm: StaffViewModel) {
                 RoleChip("Staff", role == "staff") { role = "staff" }
                 RoleChip("Admin", role == "admin") { role = "admin" }
             }
-            AppButton("Send invite", onClick = {
+            AppButton("Send invite", loading = vm.loading, onClick = {
                 validator.validate("email" to validateEmail(email.trim().lowercase()))
                 if (validator.valid) { vm.invite(email.trim().lowercase(), role); email = ""; validator.clearAll() }
             })

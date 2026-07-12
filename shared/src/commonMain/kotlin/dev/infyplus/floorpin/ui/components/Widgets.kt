@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -39,6 +40,7 @@ import dev.infyplus.floorpin.domain.IssueStatus
 import dev.infyplus.floorpin.domain.SelectOption
 import dev.infyplus.floorpin.ui.theme.Accent
 import dev.infyplus.floorpin.ui.theme.BorderColor
+import dev.infyplus.floorpin.ui.theme.Ink
 import dev.infyplus.floorpin.ui.theme.Ink2
 import dev.infyplus.floorpin.ui.theme.LocalFloorPinColors
 import dev.infyplus.floorpin.ui.theme.Muted
@@ -55,6 +57,7 @@ fun AppButton(
     variant: ButtonVariant = ButtonVariant.Primary,
     small: Boolean = false,
     enabled: Boolean = true,
+    loading: Boolean = false,
     leadingIcon: ImageVector? = null,
 ) {
     val fp = LocalFloorPinColors.current
@@ -78,7 +81,7 @@ fun AppButton(
     }
     Surface(
         onClick = onClick,
-        enabled = enabled,
+        enabled = enabled && !loading,
         shape = RoundedCornerShape(4.dp),
         color = bg,
         contentColor = fg,
@@ -92,11 +95,19 @@ fun AppButton(
                 .defaultMinSize(minHeight = if (small) 32.dp else 40.dp)
                 .padding(horizontal = if (small) 12.dp else 16.dp, vertical = if (small) 5.dp else 9.dp),
         ) {
-            if (leadingIcon != null) Icon(leadingIcon, null, Modifier.size(16.dp))
-            Text(
-                text,
-                style = if (small) MaterialTheme.typography.labelSmall else MaterialTheme.typography.bodyMedium,
-            )
+            if (loading) {
+                CircularProgressIndicator(
+                    Modifier.size(if (small) 16.dp else 20.dp),
+                    strokeWidth = 2.dp,
+                    color = fg,
+                )
+            } else {
+                if (leadingIcon != null) Icon(leadingIcon, null, Modifier.size(16.dp))
+                Text(
+                    text,
+                    style = if (small) MaterialTheme.typography.labelSmall else MaterialTheme.typography.bodyMedium,
+                )
+            }
         }
     }
 }
@@ -172,6 +183,15 @@ fun AppTextField(
         isError = isError,
         supportingText = supportingText?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
         shape = RoundedCornerShape(4.dp),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedTextColor = Ink,
+            unfocusedTextColor = Ink,
+            cursorColor = Ink,
+            focusedBorderColor = Accent,
+            unfocusedBorderColor = BorderColor,
+            focusedLabelColor = Accent,
+            unfocusedLabelColor = Muted,
+        ),
     )
 }
 

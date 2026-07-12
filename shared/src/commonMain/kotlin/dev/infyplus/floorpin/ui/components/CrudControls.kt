@@ -20,21 +20,26 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import dev.infyplus.floorpin.ui.theme.Muted
 
-/** Reusable destructive-action confirmation. Confirm runs the action then closes. */
+/** Reusable destructive-action confirmation. */
 @Composable
 fun ConfirmDialog(
     title: String,
     message: String,
     confirmLabel: String = "Delete",
+    loading: Boolean = false,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = if (loading) ({}) else onDismiss,
         title = { Text(title) },
         text = { Text(message) },
-        confirmButton = { AppButton(confirmLabel, onClick = { onConfirm(); onDismiss() }, variant = ButtonVariant.Danger) },
-        dismissButton = { AppButton("Cancel", onClick = onDismiss, variant = ButtonVariant.Neutral) },
+        confirmButton = {
+            AppButton(confirmLabel, onClick = onConfirm, variant = ButtonVariant.Danger, loading = loading)
+        },
+        dismissButton = {
+            AppButton("Cancel", onClick = onDismiss, variant = ButtonVariant.Neutral, enabled = !loading)
+        },
     )
 }
 

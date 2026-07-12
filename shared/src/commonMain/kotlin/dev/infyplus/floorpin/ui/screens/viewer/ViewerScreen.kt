@@ -150,6 +150,19 @@ fun ViewerScreen(
                         },
                         onMoveLocation = { id, x, y -> vm.moveLocation(id, x, y) },
                     )
+                    // empty-state hint when no locations exist
+                    if (mode == ViewerMode.Browse && locations.isEmpty() && !vm.refreshing) {
+                        Surface(
+                            color = Ink.copy(alpha = 0.78f), contentColor = White, shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.align(Alignment.Center).padding(horizontal = 24.dp),
+                        ) {
+                            Text(
+                                "Tap the + pin icon to place your first location on the plan.",
+                                Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
                     // mode chip
                     if (mode != ViewerMode.Browse) {
                         Surface(
@@ -209,8 +222,8 @@ fun ViewerScreen(
         addIssueTarget?.let { (locId, ix, iy) ->
             AddIssueDialog(
                 onDismiss = { addIssueTarget = null },
-                onCreate = { title, desc, status, priority, type, category, item, photoBytes, photoName ->
-                    vm.addIssueWithPhoto(locId, title, desc, status, priority, type, category, item, ix, iy, photoBytes, photoName)
+                onCreate = { title, desc, status, priority, type, category, item, photos ->
+                    vm.addIssueWithPhoto(locId, title, desc, status, priority, type, category, item, ix, iy, photos)
                     addIssueTarget = null
                 },
             )

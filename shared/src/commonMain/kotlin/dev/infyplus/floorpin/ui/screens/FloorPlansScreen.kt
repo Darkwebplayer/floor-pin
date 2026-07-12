@@ -61,15 +61,18 @@ class FloorPlansViewModel(private val container: AppContainer, private val proje
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     var error by mutableStateOf<String?>(null); private set
     var uploading by mutableStateOf(false); private set
+    var refreshing by mutableStateOf(false); private set
 
     fun refresh() = viewModelScope.launch {
+        refreshing = true; error = null
         runCatching { container.api.floorPlans(projectId) }
             .onSuccess { dtos -> container.data.floorPlans.upsertFromServer(dtos.map { it.toRow() }) }
             .onFailure { error = it.message }
+        refreshing = false
     }
 
     fun upload(name: String, bytes: ByteArray, fileName: String, onDone: (FloorPlan) -> Unit) = viewModelScope.launch {
-        uploading = true
+        uploading = true; error = null
         runCatching { container.api.uploadFloorPlan(projectId, name, bytes, fileName) }
             .onSuccess { dto ->
                 val row = dto.toRow()
@@ -81,6 +84,7 @@ class FloorPlansViewModel(private val container: AppContainer, private val proje
     }
 
     fun delete(id: String) = viewModelScope.launch {
+        error = null
         runCatching { container.api.deleteFloorPlan(id) }
             .onSuccess { container.data.floorPlans.remove(id) }
             .onFailure { error = it.message }
@@ -99,6 +103,7 @@ fun FloorPlansScreen(
     val plans by vm.plans.collectAsStateWithLifecycle()
     var showAdd by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf<FloorPlan?>(null) }
+    var deletingLoading by remember { mutableStateOf(false) }
     LaunchedEffect(projectId) { vm.refresh() } // refetch each time the screen is entered
 
     Column(Modifier.fillMaxSize().background(SurfaceWarm)) {
@@ -114,6 +119,16 @@ fun FloorPlansScreen(
             vm.error?.let { error ->
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            if (vm.refreshing) {
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    Text("Loading floor plans…", color = Muted, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+            if (!vm.refreshing && plans.isEmpty()) {
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    Text("No floor plans yet — add one to start inspecting.", color = Muted, style = MaterialTheme.typography.bodyMedium)
                 }
             }
             items(plans, key = { it.id }) { fp ->
@@ -150,7 +165,12 @@ fun FloorPlansScreen(
         ConfirmDialog(
             title = "Delete floor plan?",
             message = "\"${fp.name}\" and all its locations, issues and photos will be permanently deleted.",
-            onConfirm = { vm.delete(fp.id) },
+            loading = deletingLoading,
+            onConfirm = {
+                deletingLoading = true
+                vm.delete(fp.id)
+                deleting = null; deletingLoading = false
+            },
             onDismiss = { deleting = null },
         )
     }
@@ -168,7 +188,7 @@ private fun AddFloorPlanDialog(
     val validator = rememberValidator()
 
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = if (uploading) ({}) else onDismiss,
         title = { Text("Add a floor plan") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -193,6 +213,7 @@ private fun AddFloorPlanDialog(
         confirmButton = {
             AppButton(
                 if (uploading) "Uploading…" else "Create & open",
+                loading = uploading,
                 onClick = {
                     val p = picked
                     val n = name.trim()
@@ -204,6 +225,6 @@ private fun AddFloorPlanDialog(
                 },
             )
         },
-        dismissButton = { AppButton("Cancel", onClick = onDismiss, variant = ButtonVariant.Neutral) },
+        dismissButton = { AppButton("Cancel", onClick = onDismiss, variant = ButtonVariant.Neutral, enabled = !uploading) },
     )
 }

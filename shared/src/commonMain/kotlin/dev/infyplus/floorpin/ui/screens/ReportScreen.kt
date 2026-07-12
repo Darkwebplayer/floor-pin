@@ -92,14 +92,27 @@ fun ReportScreen(container: AppContainer, floorPlanId: String, onBack: () -> Uni
     val exporter = rememberReportExporter()
     val planName = floorPlan?.name ?: "Floor plan"
     val scope = rememberCoroutineScope()
+    var exporting by remember { mutableStateOf(false) }
+    var exportError by remember { mutableStateOf<String?>(null) }
 
     Column(Modifier.fillMaxSize().background(SurfaceWarm)) {
         AppTopBar(title = "Inspection report", crumb = planName, onBack = onBack) {
-            AppButton("Export PDF", onClick = {
-                scope.launch {
-                    exportPdf(container, exporter, floorPlan, planName, locations, issues, withIssues, issuesByLoc, photosByIssue, total, open, resolved)
-                }
-            }, small = true, leadingIcon = AppIcons.Download)
+            AppButton(
+                if (exporting) "Exporting…" else "Export PDF",
+                loading = exporting,
+                onClick = {
+                    exportError = null; exporting = true
+                    scope.launch {
+                        val failed = exportPdf(container, exporter, floorPlan, planName, locations, issues, withIssues, issuesByLoc, photosByIssue, total, open, resolved)
+                        if (failed > 0) exportError = "$failed image(s) could not be loaded; exported with placeholders."
+                        exporting = false
+                    }
+                },
+                small = true, leadingIcon = AppIcons.Download,
+            )
+        }
+        exportError?.let {
+            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
         }
         LazyColumn(
             Modifier.fillMaxSize(),
@@ -248,7 +261,7 @@ private suspend fun exportPdf(
     total: Int,
     open: Int,
     resolved: Int,
-) {
+): Int {
     val seen = mutableSetOf<String>()
     floorPlan?.let { floorPlanImageUrl(it) }?.let { seen.add(it) }
     for (loc in withIssues) {
@@ -260,12 +273,13 @@ private suspend fun exportPdf(
         }
     }
 
+    var failed = 0
     val dataUris = mutableMapOf<String, String>()
     for (url in seen) {
         try {
             val bytes: ByteArray = container.http.get(url).body()
             dataUris[url] = "data:image/*;base64,${Base64.encode(bytes)}"
-        } catch (_: Exception) { }
+        } catch (_: Exception) { failed++ }
     }
 
     val planImageUrl = floorPlan?.let { floorPlanImageUrl(it) }
@@ -274,6 +288,7 @@ private suspend fun exportPdf(
         "FloorPin — $planName",
         Config.BASE_URL
     )
+    return failed
 }
 
 private fun coord(v: Double?): Int? = v?.let { (it + 0.5).toInt() }
@@ -367,8 +382,9 @@ private fun buildReportHtml(
           .box{border:1px solid #e5edf5;border-radius:6px;padding:12px;flex:1}
           .box .k{font-size:11px;text-transform:uppercase;color:#64748d}
           .box .v{font-size:28px;color:#061b31}
-          .planwrap{position:relative;display:inline-block;width:100%;margin-top:8px}
-          .plan{display:block;width:100%;border:1px solid #e5edf5;border-radius:6px}
+          .planwrap{position:relative;display:inline-block;max-width:100%;margin:8px auto 0;text-align:left;break-inside:avoid;page-break-inside:avoid}
+          .planrow{text-align:center}
+          .plan{display:block;max-width:100%;max-height:150mm;border:1px solid #e5edf5;border-radius:6px}
           .pin{position:absolute;transform:translate(-50%,-100%);width:14px;height:14px;border-radius:50% 50% 50% 0;
                transform-origin:bottom;border:2px solid #fff;box-shadow:0 1px 2px rgba(0,0,0,.3)}
           .pin{transform:translate(-50%,-100%) rotate(-45deg)}
@@ -404,7 +420,7 @@ private fun buildReportHtml(
             <div class="box"><div class="k">Open</div><div class="v" style="color:#ea2261">$open</div></div>
             <div class="box"><div class="k">Resolved</div><div class="v" style="color:#15be53">$resolved</div></div>
           </div>
-          $planBlock
+          <div class="planrow">$planBlock</div>
         </section>
         $pages
         </body></html>

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -28,6 +29,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -195,9 +197,9 @@ private fun LocationDetail(vm: ViewerViewModel, location: Location, issues: List
     if (showAdd) {
         AddIssueDialog(
             onDismiss = { showAdd = false },
-            onCreate = { title, desc, status, priority, type, category, item, photoBytes, photoName ->
+            onCreate = { title, desc, status, priority, type, category, item, photos ->
                 showAdd = false
-                vm.addIssueWithPhoto(location.id, title, desc, status, priority, type, category, item, location.x, location.y, photoBytes, photoName)
+                vm.addIssueWithPhoto(location.id, title, desc, status, priority, type, category, item, location.x, location.y, photos)
             },
         )
     }
@@ -299,25 +301,29 @@ private fun IssueDetail(vm: ViewerViewModel, location: Location, issue: Issue, o
         if (!issue.description.isNullOrBlank()) Text(issue.description!!, style = MaterialTheme.typography.bodyMedium, color = Ink, modifier = Modifier.padding(top = 12.dp))
 
         // photos
-        FlowRow(Modifier.fillMaxWidth().padding(vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            photos.forEach { p ->
-                photoImageUrl(p)?.let { url ->
-                    AsyncImage(
-                        model = url,
-                        contentDescription = "Photo",
-                        modifier = Modifier.size(72.dp)
-                            .background(SurfaceWarm, RoundedCornerShape(8.dp))
-                            .border(1.dp, BorderColor, RoundedCornerShape(8.dp))
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { lightboxPhoto = p },
-                        contentScale = ContentScale.Crop,
-                    )
+        if (photos.isNotEmpty()) {
+            FlowRow(Modifier.fillMaxWidth().padding(vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                photos.forEach { p ->
+                    photoImageUrl(p)?.let { url ->
+                        AsyncImage(
+                            model = url,
+                            contentDescription = "Photo",
+                            modifier = Modifier.size(72.dp)
+                                .background(SurfaceWarm, RoundedCornerShape(8.dp))
+                                .border(1.dp, BorderColor, RoundedCornerShape(8.dp))
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { lightboxPhoto = p },
+                            contentScale = ContentScale.Crop,
+                        )
+                    }
                 }
             }
+        } else {
+            Text("No photos yet.", color = Muted, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(vertical = 14.dp))
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            AppButton("Take photo", onClick = capture, small = true, variant = ButtonVariant.Neutral, leadingIcon = AppIcons.Camera)
-            AppButton("Gallery", onClick = pick, small = true, variant = ButtonVariant.Neutral, leadingIcon = AppIcons.Upload)
+            AppButton("Take photo", onClick = capture, small = true, variant = ButtonVariant.Neutral, leadingIcon = AppIcons.Camera, loading = vm.uploading)
+            AppButton("Gallery", onClick = pick, small = true, variant = ButtonVariant.Neutral, leadingIcon = AppIcons.Upload, loading = vm.uploading)
         }
 
         Text("Status", style = MaterialTheme.typography.bodyMedium, color = Ink, modifier = Modifier.padding(top = 20.dp, bottom = 6.dp))
@@ -338,16 +344,17 @@ private fun IssueDetail(vm: ViewerViewModel, location: Location, issue: Issue, o
     }
 
     if (showEdit) {
-        EditIssueDialog(issue, onDismiss = { showEdit = false }) { title, desc, priority, type, category, item ->
+        EditIssueDialog(issue, onDismiss = { showEdit = false }, onSave = { title, desc, priority, type, category, item ->
             showEdit = false
             vm.updateIssue(issue.id, title, desc, priority, type, category, item)
-        }
+        })
     }
     deletePhotoId?.let { pid ->
         ConfirmDialog(
             title = "Delete photo?",
             message = "This photo will be permanently removed.",
-            onConfirm = { vm.deletePhoto(pid) },
+            loading = vm.uploading,
+            onConfirm = { vm.deletePhoto(pid); deletePhotoId = null },
             onDismiss = { deletePhotoId = null },
         )
     }
@@ -366,16 +373,17 @@ private fun EditIssueDialog(
     issue: Issue,
     onDismiss: () -> Unit,
     onSave: (title: String, desc: String?, priority: IssuePriority, type: String?, category: String?, item: String?) -> Unit,
+    loading: Boolean = false,
 ) {
     var title by remember { mutableStateOf(issue.title) }
     var desc by remember { mutableStateOf(issue.description ?: "") }
     var type by remember { mutableStateOf(issue.type) }
-    var category by remember { mutableStateOf(issue.category) }
-    var item by remember { mutableStateOf(issue.item) }
+    var category by remember { mutableStateOf(issue.category ?: "General") }
+    var item by remember { mutableStateOf(issue.item ?: "General Snag") }
     var priority by remember { mutableStateOf(IssuePriority.fromWire(issue.priority)) }
     val validator = rememberValidator()
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = if (loading) ({}) else onDismiss,
         title = { Text("Edit issue") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -388,20 +396,20 @@ private fun EditIssueDialog(
                 )
                 AppTextField(desc, { desc = it }, label = "Description", singleLine = false)
                 AppDropdown(type, IssueType.options, { type = it }, label = "Type")
-                AppDropdown(category, IssueCategory.options, { category = it }, label = "Category")
-                AppDropdown(item, IssueItem.options, { item = it }, label = "Item")
+                AppTextField(category, { category = it }, label = "Category")
+                AppTextField(item, { item = it }, label = "Item")
                 Text("Priority", style = MaterialTheme.typography.bodySmall, color = Muted)
                 PriorityChips(priority) { priority = it }
             }
         },
         confirmButton = {
-            AppButton("Save", onClick = {
+            AppButton(if (loading) "Saving…" else "Save", loading = loading, onClick = {
                 val t = title.trim()
                 validator.validate("title" to validateRequired(t, "Issue title"))
                 if (validator.valid) onSave(t, desc.trim().ifBlank { null }, priority, type, category, item)
             })
         },
-        dismissButton = { AppButton("Cancel", onClick = onDismiss, variant = ButtonVariant.Neutral) },
+        dismissButton = { AppButton("Cancel", onClick = onDismiss, variant = ButtonVariant.Neutral, enabled = !loading) },
     )
 }
 
@@ -439,67 +447,89 @@ private fun Chip(label: String, on: Boolean, onClick: () -> Unit) {
 @Composable
 internal fun AddIssueDialog(
     onDismiss: () -> Unit,
-    onCreate: (title: String, desc: String?, status: IssueStatus, priority: IssuePriority, type: String?, category: String?, item: String?, photoBytes: ByteArray?, photoName: String?) -> Unit,
+    onCreate: (title: String, desc: String?, status: IssueStatus, priority: IssuePriority, type: String?, category: String?, item: String?, photos: List<Pair<ByteArray, String>>) -> Unit,
 ) {
     var step by remember { mutableStateOf(0) }
     var title by remember { mutableStateOf("") }
     var desc by remember { mutableStateOf("") }
     var type by remember { mutableStateOf(IssueType.options.first().value) }
-    var category by remember { mutableStateOf(IssueCategory.options.first().value) }
-    var item by remember { mutableStateOf(IssueItem.options.first().value) }
+    var category by remember { mutableStateOf("General") }
+    var item by remember { mutableStateOf("General Snag") }
     var status by remember { mutableStateOf(IssueStatus.OPEN) }
     var priority by remember { mutableStateOf(IssuePriority.MEDIUM) }
-    var photoBytes by remember { mutableStateOf<ByteArray?>(null) }
-    var photoName by remember { mutableStateOf<String?>(null) }
+    val photos = remember { mutableStateListOf<Pair<ByteArray, String>>() }
     val validator = rememberValidator()
     val annotate = rememberPhotoMarker()
     val pickGallery = rememberImagePicker { bytes, name ->
         annotate(bytes, name) { result ->
-            if (result != null) { photoBytes = result.bytes; photoName = result.fileName }
+            if (result != null) { photos.add(result.bytes to result.fileName) }
         }
     }
     val takePhoto = rememberCameraCapture { bytes, name ->
         annotate(bytes, name) { result ->
-            if (result != null) { photoBytes = result.bytes; photoName = result.fileName }
+            if (result != null) { photos.add(result.bytes to result.fileName) }
         }
     }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (step == 0) "New issue" else "Add a photo") },
+        title = { Text(if (step == 0) "New issue" else "Add photos") },
         text = {
-            if (step == 0) {
-                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    AppTextField(
-                        title, { title = it; validator.clearField("title") },
-                        label = "Issue title", placeholder = "e.g. Sink not working",
-                        isError = validator.hasError("title"),
-                        supportingText = validator.errorFor("title"),
-                        required = true,
-                    )
-                    AppTextField(desc, { desc = it }, label = "Description", placeholder = "What's wrong…", singleLine = false)
-                    AppDropdown(type, IssueType.options, { type = it }, label = "Type")
-                    AppDropdown(category, IssueCategory.options, { category = it }, label = "Category")
-                    AppDropdown(item, IssueItem.options, { item = it }, label = "Item")
-                    Text("Status", style = MaterialTheme.typography.bodySmall, color = Muted)
-                    StatusChips(status) { status = it }
-                    Text("Priority", style = MaterialTheme.typography.bodySmall, color = Muted)
-                    PriorityChips(priority) { priority = it }
-                }
-            } else {
-                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Attach a photo (optional)", style = MaterialTheme.typography.bodySmall, color = Muted)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        AppButton("Take photo", onClick = takePhoto, small = true, variant = ButtonVariant.Neutral, leadingIcon = AppIcons.Camera)
-                        AppButton("Gallery", onClick = pickGallery, small = true, variant = ButtonVariant.Neutral, leadingIcon = AppIcons.Upload)
-                    }
-                    photoBytes?.let { b ->
-                        AsyncImage(
-                            model = b,
-                            contentDescription = "Selected photo",
-                            modifier = Modifier.fillMaxWidth().height(160.dp),
-                            contentScale = ContentScale.Crop,
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                if (step == 0) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        AppTextField(
+                            title, { title = it; validator.clearField("title") },
+                            label = "Issue title", placeholder = "e.g. Sink not working",
+                            isError = validator.hasError("title"),
+                            supportingText = validator.errorFor("title"),
+                            required = true,
                         )
+                        AppTextField(desc, { desc = it }, label = "Description", placeholder = "What's wrong…", singleLine = false)
+                        AppDropdown(type, IssueType.options, { type = it }, label = "Type")
+                        AppTextField(category, { category = it }, label = "Category")
+                        AppTextField(item, { item = it }, label = "Item")
+                        Text("Status", style = MaterialTheme.typography.bodySmall, color = Muted)
+                        StatusChips(status) { status = it }
+                        Text("Priority", style = MaterialTheme.typography.bodySmall, color = Muted)
+                        PriorityChips(priority) { priority = it }
+                    }
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("Attach photos (optional)", style = MaterialTheme.typography.bodySmall, color = Muted)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            AppButton("Take photo", onClick = takePhoto, small = true, variant = ButtonVariant.Neutral, leadingIcon = AppIcons.Camera)
+                            AppButton("Gallery", onClick = pickGallery, small = true, variant = ButtonVariant.Neutral, leadingIcon = AppIcons.Upload)
+                        }
+                        if (photos.isNotEmpty()) {
+                            FlowRow(
+                                Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                photos.forEachIndexed { idx, (bytes, _) ->
+                                    Box(Modifier.size(100.dp).clip(RoundedCornerShape(8.dp))) {
+                                        AsyncImage(
+                                            model = bytes,
+                                            contentDescription = "Photo ${idx + 1}",
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentScale = ContentScale.Crop,
+                                        )
+                                        Surface(
+                                            onClick = { photos.removeAt(idx) },
+                                            shape = CircleShape,
+                                            color = Color.Black.copy(alpha = 0.6f),
+                                            contentColor = Color.White,
+                                            modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(22.dp),
+                                        ) {
+                                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                                Text("✕", style = MaterialTheme.typography.labelSmall)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -512,7 +542,7 @@ internal fun AddIssueDialog(
                 })
             } else {
                 AppButton("Save issue", onClick = {
-                    onCreate(title.trim(), desc.trim().ifBlank { null }, status, priority, type, category, item, photoBytes, photoName)
+                    onCreate(title.trim(), desc.trim().ifBlank { null }, status, priority, type, category, item, photos.toList())
                 })
             }
         },

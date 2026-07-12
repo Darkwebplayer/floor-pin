@@ -3,31 +3,30 @@ package dev.infyplus.floorpin.domain
 data class SelectOption(val value: String, val label: String)
 
 object IssueCategory {
-    val options = listOf(
-        SelectOption("architectural", "Architectural"),
-        SelectOption("cleaning", "Cleaning"),
-        SelectOption("mep_electrical", "MEP-Electrical"),
-    )
-
-    fun labelFor(value: String?): String? = value?.let { v -> options.firstOrNull { it.value == v }?.label ?: v }
+    fun labelFor(value: String?): String? = value
 }
 
 object IssueType {
     val options = listOf(
-        SelectOption("acoustic_walling", "Acoustic Walling"),
-        SelectOption("carpet", "Carpet"),
-        SelectOption("ceiling", "Ceiling"),
-        SelectOption("doors", "Doors"),
+        SelectOption("Architectural", "Architectural"),
+        SelectOption("BARRING", "BARRING"),
+        SelectOption("Below Ceiling", "Below Ceiling"),
+        SelectOption("CLEANING", "CLEANING"),
+        SelectOption("Drilling", "Drilling"),
+        SelectOption("Earthworks", "Earthworks"),
+        SelectOption("General observations", "General observations"),
+        SelectOption("Interior-Design", "Interior-Design"),
+        SelectOption("MEP-ELV", "MEP-ELV"),
+        SelectOption("MEP-Electrical", "MEP-Electrical"),
+        SelectOption("MEP-Mechanical", "MEP-Mechanical"),
+        SelectOption("SAFETY", "SAFETY"),
+        SelectOption("SUPPORT", "SUPPORT"),
+        SelectOption("Steel and Glass", "Steel and Glass"),
     )
 
     fun labelFor(value: String?): String? = value?.let { v -> options.firstOrNull { it.value == v }?.label ?: v }
 }
 
 object IssueItem {
-    val options = listOf(
-        SelectOption("general_snag", "General Snag"),
-        SelectOption("custom", "Custom"),
-    )
-
-    fun labelFor(value: String?): String? = value?.let { v -> options.firstOrNull { it.value == v }?.label ?: v }
+    fun labelFor(value: String?): String? = value
 }
