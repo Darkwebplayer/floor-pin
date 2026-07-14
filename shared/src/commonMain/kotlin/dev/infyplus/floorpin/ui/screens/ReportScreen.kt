@@ -123,7 +123,7 @@ fun ReportScreen(container: AppContainer, floorPlanId: String, onBack: () -> Uni
                 AppCard(elevated = true, modifier = Modifier.widthIn(max = 900.dp).fillMaxWidth()) {
                     Column(Modifier.padding(32.dp)) {
                         Text("DEFECT INSPECTION REPORT", style = MaterialTheme.typography.labelSmall, color = Accent)
-                        Text(planName, style = MaterialTheme.typography.displayMedium, color = Ink, modifier = Modifier.padding(top = 8.dp))
+                        Text(planName, style = MaterialTheme.typography.headlineLarge, color = Ink, modifier = Modifier.padding(top = 8.dp))
                         // summary
                         Row(Modifier.fillMaxWidth().padding(top = 24.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                             SummaryBox("Locations", locations.size.toString(), Modifier.weight(1f))
@@ -162,7 +162,7 @@ private fun SummaryBox(label: String, value: String, modifier: Modifier = Modifi
     AppCard(modifier = modifier) {
         Column(Modifier.padding(16.dp)) {
             Text(label.uppercase(), style = MaterialTheme.typography.labelSmall, color = Muted)
-            Text(value, style = MaterialTheme.typography.headlineLarge, color = valueColor, fontWeight = FontWeight.Light, modifier = Modifier.padding(top = 4.dp))
+            Text(value, style = MaterialTheme.typography.headlineMedium, color = valueColor, fontWeight = FontWeight.Light, modifier = Modifier.padding(top = 4.dp))
         }
     }
 }

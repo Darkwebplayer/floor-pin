@@ -9,3 +9,8 @@ internal actual fun flattenImageWithStrokes(
     // TODO: iOS — use UIGraphicsImageRenderer to composite strokes onto UIImage
     return imageBytes
 }
+
+internal actual fun rotateJpeg(imageBytes: ByteArray, degrees: Int): ByteArray {
+    // TODO: iOS — rotate via UIImage; picker/annotator are out of v1 iOS scope
+    return imageBytes
+}

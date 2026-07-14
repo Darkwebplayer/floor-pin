@@ -88,4 +88,9 @@ object AppIcons {
         IconPart("M4 9h10.5a5.5 5.5 0 0 1 0 11H12"),
         strokeWidth = 1.8f,
     )
+    val Rotate = svgIcon(
+        IconPart("M20 11a8 8 0 1 0-2.3 5.7"),
+        IconPart("M20 5v6h-6"),
+        strokeWidth = 1.8f,
+    )
 }

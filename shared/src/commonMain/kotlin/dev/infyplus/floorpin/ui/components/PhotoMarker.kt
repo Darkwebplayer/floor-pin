@@ -64,6 +64,9 @@ internal expect fun flattenImageWithStrokes(
     strokes: List<DrawnStroke>,
 ): ByteArray
 
+/** Platform-specific: rotate JPEG bytes clockwise by [degrees] (90/180/270), returns JPEG. */
+internal expect fun rotateJpeg(imageBytes: ByteArray, degrees: Int): ByteArray
+
 private val MARKER_COLORS = listOf(
     Color(0xFFE53935), // red
     Color(0xFF1E88E5), // blue
@@ -117,6 +120,8 @@ private fun PhotoMarkerDialog(
     onDone: (ByteArray) -> Unit,
     onCancel: () -> Unit,
 ) {
+    // Working bytes: rotate re-orients these so display + flatten stay in sync.
+    var bytes by remember(imageBytes) { mutableStateOf(imageBytes) }
     val strokes = remember { mutableStateListOf<DrawnStroke>() }
     var currentStroke by remember { mutableStateOf<List<Offset>?>(null) }
     var selectedColor by remember { mutableStateOf(MARKER_COLORS[0]) }
@@ -150,8 +155,8 @@ private fun PhotoMarkerDialog(
                     Text("Mark photo", style = MaterialTheme.typography.labelSmall, color = White)
                     Surface(
                         onClick = {
-                            val result = if (strokes.isEmpty()) imageBytes
-                            else flattenImageWithStrokes(imageBytes, displaySize.width, displaySize.height, strokes.toList())
+                            val result = if (strokes.isEmpty()) bytes
+                            else flattenImageWithStrokes(bytes, displaySize.width, displaySize.height, strokes.toList())
                             onDone(result)
                         },
                         shape = CircleShape,
@@ -164,7 +169,7 @@ private fun PhotoMarkerDialog(
                 // ── drawing area ──
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     AsyncImage(
-                        model = imageBytes,
+                        model = bytes,
                         contentDescription = null,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.FillBounds,
@@ -223,6 +228,21 @@ private fun PhotoMarkerDialog(
                             modifier = Modifier.size(if (selected) 36.dp else 28.dp),
                             border = if (selected) androidx.compose.foundation.BorderStroke(2.dp, White) else null,
                         ) {}
+                    }
+                    // rotate 90° CW (clears strokes — their coords belong to the old orientation)
+                    Surface(
+                        onClick = {
+                            bytes = rotateJpeg(bytes, 90)
+                            strokes.clear()
+                            currentStroke = null
+                        },
+                        shape = CircleShape,
+                        color = Color.White.copy(alpha = 0.15f),
+                        modifier = Modifier.size(32.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(AppIcons.Rotate, "Rotate", Modifier.size(18.dp), tint = White)
+                        }
                     }
                     // undo
                     Surface(

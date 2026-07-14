@@ -2,6 +2,8 @@ package dev.infyplus.floorpin.ui
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.media.ExifInterface
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
@@ -15,13 +17,35 @@ import dev.infyplus.floorpin.data.nowMillis
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 
 private const val MAX_EDGE = 1600
 private const val JPEG_QUALITY = 80
 
-/** Decode → downscale longest edge to MAX_EDGE → JPEG. Keeps uploads small. */
+/** Rotate/flip [bmp] per the source EXIF orientation. BitmapFactory ignores EXIF, so
+ *  without this, photos from devices that store rotation as metadata come out sideways. */
+private fun applyExifOrientation(raw: ByteArray, bmp: Bitmap): Bitmap {
+    val orientation = runCatching {
+        ExifInterface(ByteArrayInputStream(raw))
+            .getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+    }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
+    val m = Matrix()
+    when (orientation) {
+        ExifInterface.ORIENTATION_ROTATE_90 -> m.postRotate(90f)
+        ExifInterface.ORIENTATION_ROTATE_180 -> m.postRotate(180f)
+        ExifInterface.ORIENTATION_ROTATE_270 -> m.postRotate(270f)
+        ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> m.postScale(-1f, 1f)
+        ExifInterface.ORIENTATION_FLIP_VERTICAL -> m.postScale(1f, -1f)
+        ExifInterface.ORIENTATION_TRANSPOSE -> { m.postRotate(90f); m.postScale(-1f, 1f) }
+        ExifInterface.ORIENTATION_TRANSVERSE -> { m.postRotate(270f); m.postScale(-1f, 1f) }
+        else -> return bmp
+    }
+    return Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
+}
+
+/** Decode → apply EXIF orientation → downscale longest edge to MAX_EDGE → JPEG. Keeps uploads small. */
 private fun processImage(raw: ByteArray): ByteArray {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     BitmapFactory.decodeByteArray(raw, 0, raw.size, bounds)
@@ -29,7 +53,8 @@ private fun processImage(raw: ByteArray): ByteArray {
     val longest = maxOf(bounds.outWidth, bounds.outHeight)
     while (longest / sample > MAX_EDGE * 2) sample *= 2
     val opts = BitmapFactory.Options().apply { inSampleSize = sample }
-    val bmp = BitmapFactory.decodeByteArray(raw, 0, raw.size, opts) ?: return raw
+    val decoded = BitmapFactory.decodeByteArray(raw, 0, raw.size, opts) ?: return raw
+    val bmp = applyExifOrientation(raw, decoded)
     val scaled = run {
         val edge = maxOf(bmp.width, bmp.height)
         if (edge <= MAX_EDGE) bmp

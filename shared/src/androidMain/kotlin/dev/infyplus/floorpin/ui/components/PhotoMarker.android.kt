@@ -2,6 +2,7 @@ package dev.infyplus.floorpin.ui.components
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import androidx.compose.ui.graphics.toArgb
@@ -45,6 +46,19 @@ internal actual fun flattenImageWithStrokes(
 
     return ByteArrayOutputStream().use { out ->
         bmp.compress(Bitmap.CompressFormat.JPEG, 92, out)
+        out.toByteArray()
+    }
+}
+
+internal actual fun rotateJpeg(imageBytes: ByteArray, degrees: Int): ByteArray {
+    val src = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size) ?: return imageBytes
+    val rotated = Bitmap.createBitmap(
+        src, 0, 0, src.width, src.height,
+        Matrix().apply { postRotate(degrees.toFloat()) }, true,
+    )
+    if (src !== rotated) src.recycle()
+    return ByteArrayOutputStream().use { out ->
+        rotated.compress(Bitmap.CompressFormat.JPEG, 92, out)
         out.toByteArray()
     }
 }
