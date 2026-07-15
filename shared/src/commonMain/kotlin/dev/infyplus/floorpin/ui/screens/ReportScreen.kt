@@ -61,9 +61,11 @@ import dev.infyplus.floorpin.ui.theme.Muted
 import dev.infyplus.floorpin.ui.theme.Success
 import dev.infyplus.floorpin.ui.theme.SurfaceWarm
 import dev.infyplus.floorpin.ui.theme.White
+import floorpin.shared.generated.resources.Res
 import io.ktor.client.call.body
 import io.ktor.client.request.get
 import kotlinx.coroutines.launch
+import org.jetbrains.compose.resources.ExperimentalResourceApi
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 import kotlin.time.ExperimentalTime
@@ -247,7 +249,7 @@ private fun statusColor(status: String): String = when (status) {
     else -> "#533afd"
 }
 
-@OptIn(ExperimentalEncodingApi::class)
+@OptIn(ExperimentalEncodingApi::class, ExperimentalResourceApi::class)
 private suspend fun exportPdf(
     container: AppContainer,
     exporter: (String, String, String) -> Unit,
@@ -282,9 +284,13 @@ private suspend fun exportPdf(
         } catch (_: Exception) { failed++ }
     }
 
+    // Bundled asset, not a network fetch — a failure here shouldn't count toward `failed`.
+    val footerUri = runCatching { "data:image/png;base64,${Base64.encode(Res.readBytes("drawable/footer.png"))}" }
+        .getOrDefault("")
+
     val planImageUrl = floorPlan?.let { floorPlanImageUrl(it) }
     exporter(
-        buildReportHtml(planName, planImageUrl, allLocations, allIssues, withIssues, issuesByLoc, photosByIssue, dataUris, allLocations.size, total, open, resolved),
+        buildReportHtml(planName, planImageUrl, allLocations, allIssues, withIssues, issuesByLoc, photosByIssue, dataUris, allLocations.size, total, open, resolved, footerUri),
         "FloorPin — $planName",
         Config.BASE_URL
     )
@@ -306,6 +312,7 @@ private fun buildReportHtml(
     total: Int,
     open: Int,
     resolved: Int,
+    footerUri: String,
 ): String {
     // One page per location, each starting fresh — never on the plan-image page.
     val pages = withIssues.joinToString("") { loc ->
@@ -374,6 +381,24 @@ private fun buildReportHtml(
         <!doctype html><html><head><meta charset="utf-8">
         <style>
           body{font-family:-apple-system,system-ui,sans-serif;color:#273951;margin:0}
+          /* The footer needs two cooperating parts — neither works alone:
+             1. .pgfoot is position:fixed, which is what makes Chromium repeat it on
+                every sheet. Its offsets MUST stay positive: a negative `bottom` drops
+                it outside the page box and Chromium reflows it onto the *next* sheet's
+                top, so page 1 loses it entirely (verified at -11px and -20px).
+             2. Being fixed, it reserves no space in the flow, so text would run under
+                it. The repeating <tfoot> spacer reserves an equal band on every page.
+             .fspace must stay >= footer height + bottom offset (22 + 5). */
+          @page{margin-bottom:13.5mm}
+          table.rep{width:100%;border-collapse:collapse}
+          tfoot{display:table-footer-group}
+          tfoot td{padding:0}
+          .fspace{height:30px}
+          .pgfoot{position:fixed;left:5px;bottom:5px;display:flex;align-items:center;gap:6px}
+          .pgfoot img{height:22px;width:22px}
+          .fmeta{display:flex;flex-direction:column;line-height:1.15}
+          .fname{font-size:11px;font-weight:700;color:#061b31}
+          .ftag{font-size:8px;color:#64748d}
           .page{padding:24px 28px}
           .page.loc{page-break-before:always}
           h1{color:#061b31;font-weight:300;font-size:32px;margin:0 0 4px}
@@ -411,6 +436,10 @@ private fun buildReportHtml(
           .gallery{border:1px solid #9b1c1c;border-radius:4px;padding:10px;margin-top:12px;display:flex;flex-wrap:wrap;gap:10px}
           .gallery img{max-width:180px;max-height:200px;border-radius:3px}
         </style></head><body>
+        ${if (footerUri.isBlank()) "" else """<div class="pgfoot"><img src="$footerUri" /><div class="fmeta"><span class="fname">uba</span><span class="ftag">snagging inspection services</span></div></div>"""}
+        <table class="rep">
+        ${if (footerUri.isBlank()) "" else """<tfoot><tr><td><div class="fspace"></div></td></tr></tfoot>"""}
+        <tbody><tr><td>
         <section class="page">
           <div class="eyebrow">Defect inspection report</div>
           <h1>${esc(planName)}</h1>
@@ -423,6 +452,7 @@ private fun buildReportHtml(
           <div class="planrow">$planBlock</div>
         </section>
         $pages
+        </td></tr></tbody></table>
         </body></html>
     """.trimIndent()
 }
