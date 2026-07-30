@@ -124,12 +124,12 @@ class ApiService(private val client: HttpClient) {
     suspend fun signOut() { client.post("$BASE/api/auth/sign-out") }
 
     // ── projects ──
-    suspend fun projects(): List<ProjectDto> = client.get("$BASE/api/projects").body()
+    suspend fun projects(): List<ProjectDto> = client.get("$BASE/api/projects").bodyOrThrow()
     suspend fun createProject(name: String, description: String?): ProjectDto =
         client.post("$BASE/api/projects") {
             contentType(ContentType.Application.Json)
             setBody(buildJsonObject { put("name", name); if (description != null) put("description", description) })
-        }.body()
+        }.bodyOrThrow()
     suspend fun updateProject(id: String, name: String?, description: String?): ProjectDto =
         client.patch("$BASE/api/projects/$id") {
             contentType(ContentType.Application.Json)
@@ -137,14 +137,14 @@ class ApiService(private val client: HttpClient) {
                 if (name != null) put("name", name)
                 if (description != null) put("description", description)
             })
-        }.body()
+        }.bodyOrThrow()
     suspend fun deleteProject(id: String) { client.delete("$BASE/api/projects/$id") }
 
     // ── floor plans ──
     suspend fun floorPlans(projectId: String): List<FloorPlanDto> =
-        client.get("$BASE/api/projects/$projectId/floor-plans").body()
+        client.get("$BASE/api/projects/$projectId/floor-plans").bodyOrThrow()
     suspend fun floorPlan(id: String): FloorPlanDto =
-        client.get("$BASE/api/floor-plans/$id").body()
+        client.get("$BASE/api/floor-plans/$id").bodyOrThrow()
     suspend fun deleteFloorPlan(id: String) { client.delete("$BASE/api/floor-plans/$id") }
     suspend fun uploadFloorPlan(projectId: String, name: String, bytes: ByteArray, filename: String): FloorPlanDto =
         client.post("$BASE/api/projects/$projectId/floor-plans") {
@@ -153,8 +153,8 @@ class ApiService(private val client: HttpClient) {
 
     // ── locations / issues (reads; writes flow through /api/sync) ──
     suspend fun issues(locationId: String): List<IssueDto> =
-        client.get("$BASE/api/locations/$locationId/issues").body()
-    suspend fun issue(id: String): IssueDto = client.get("$BASE/api/issues/$id").body()
+        client.get("$BASE/api/locations/$locationId/issues").bodyOrThrow()
+    suspend fun issue(id: String): IssueDto = client.get("$BASE/api/issues/$id").bodyOrThrow()
 
     /**
      * [photoId] is the client-minted id, sent so a retry after a lost response updates the same row
@@ -172,9 +172,9 @@ class ApiService(private val client: HttpClient) {
 
     // ── activity ──
     suspend fun activity(limit: Int = 50, offset: Int = 0): List<ActivityLogDto> =
-        client.get("$BASE/api/activity?limit=$limit&offset=$offset").body()
+        client.get("$BASE/api/activity?limit=$limit&offset=$offset").bodyOrThrow()
     suspend fun entityActivity(type: String, id: String): List<ActivityLogDto> =
-        client.get("$BASE/api/activity/entity/$type/$id").body()
+        client.get("$BASE/api/activity/entity/$type/$id").bodyOrThrow()
 
     // ── sync ──
     // Returns the status AND the per-op results. The engine needs both: the status distinguishes
@@ -194,7 +194,7 @@ class ApiService(private val client: HttpClient) {
     }
 
     // ── admin ──
-    suspend fun users(): List<UserDto> = client.get("$BASE/api/admin/users").body<ListUsersResponse>().users
+    suspend fun users(): List<UserDto> = client.get("$BASE/api/admin/users").bodyOrThrow<ListUsersResponse>().users
     suspend fun setRole(userId: String, role: String) {
         client.post("$BASE/api/admin/users/$userId/role") {
             contentType(ContentType.Application.Json)
@@ -203,7 +203,7 @@ class ApiService(private val client: HttpClient) {
     }
     suspend fun ban(userId: String) { client.post("$BASE/api/admin/users/$userId/ban") }
     suspend fun unban(userId: String) { client.post("$BASE/api/admin/users/$userId/unban") }
-    suspend fun allowlist(): List<AllowlistEntry> = client.get("$BASE/api/admin/allowlist").body()
+    suspend fun allowlist(): List<AllowlistEntry> = client.get("$BASE/api/admin/allowlist").bodyOrThrow()
     suspend fun addAllowlist(email: String, role: String) {
         client.post("$BASE/api/admin/allowlist") {
             contentType(ContentType.Application.Json)
