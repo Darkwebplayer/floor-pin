@@ -62,10 +62,11 @@ issue 1──N photo
 - **Write paths differ by entity** — **locations & issues** write local + outbox (offline-capable, LWW via sync). **Projects, floor plans, photos** are **online-only** direct REST (`ProjectRepo`/`FloorPlanRepo` have no outbox; create/update/delete call `ApiService` then cache the response, surfacing `error` on failure). Full CRUD exists everywhere except: floor plans are delete-only (no server PATCH — name set at upload). Deletes go through a shared `ConfirmDialog`. Note: the issue `item` field is client/local-only — it's not in the server's `/api/sync` whitelist or REST body, so edits to it don't round-trip to the backend.
 - **Manual DI** — `AppContainer` class, built once per platform; no Hilt/Koin
 - **Single `floorpin.sq` file** — all SQLDelight schema + queries in one file (7 tables, full CRUD + upserts)
-- **HTML→PDF via WebView** — report export builds HTML in Kotlin, renders in platform WebView, prints via PrintDocumentAdapter. Images are pre-fetched through the auth'd Ktor client and embedded as base64 data URIs (avoids WebView auth/CORS/ORB issues). JS image-load detection via `@JavascriptInterface` waits for all `<img>` elements to settle before printing. WebView is briefly attached to the decor view (1×1 px invisible) so layout completes.
+- **HTML→PDF via WebView** — report export builds HTML in Kotlin, renders in platform WebView, prints via PrintDocumentAdapter. Images are pre-fetched **concurrently** (bounded by a `Semaphore(6)`, on `Dispatchers.Default`) through the auth'd Ktor client and embedded as base64 data URIs (avoids WebView auth/CORS/ORB issues). JS image-load detection via `@JavascriptInterface` waits for all `<img>` elements to settle before printing. WebView is briefly attached to the decor view (1×1 px invisible) so layout completes.
+- **Images are WebP, and re-encoded per use** — uploads are downscaled to 1600px longest edge / WebP q78 (`ImageCodec.android.kt`, ~30% smaller than the old JPEG q80). Issue photos are downscaled again to 800px for PDF embedding, since they print into a 180×200px box — embedding the 1600px original was ~8× the pixels needed and could OOM the print WebView. The floor-plan image is embedded as uploaded (it prints near full page width). Data URIs carry a magic-byte-sniffed media type (`sniffImageMime`); the old `image/*` is not a valid MIME type and only worked via Chromium sniffing. Old JPEG/PNG objects in R2 still work everywhere.
 - **EncryptedSharedPreferences for tokens** — not DataStore
 - **BASE_URL hardcoded** in `Config.kt` (points to production Worker URL)
-- **Photo annotation** — Compose Canvas overlay for real-time drawing on issue photos, platform `expect`/`actual` for flattening strokes onto image bytes (Android: Bitmap+Canvas, iOS: stub)
+- **Photo annotation** — Compose Canvas overlay for real-time drawing on issue photos, platform `expect`/`actual` for flattening strokes onto image bytes (Android: Bitmap+Canvas, iOS: stub). Flatten/rotate re-encode at the same WebP quality as the upload, so annotating a photo no longer grows it (it used to re-encode at JPEG q92).
 
 ## PDF Export Architecture
 
@@ -73,8 +74,9 @@ issue 1──N photo
 User taps "Export PDF" in ReportScreen
   └─> Coroutine launches exportPdf()
       ├─> Collects all image URLs (plan image + issue photos)
-      ├─> Fetches each via container.http.get(url).body<ByteArray>()  ← auth'd Ktor client
-      ├─> Base64-encodes to "data:image/*;base64,..." data URIs
+      ├─> Fetches them in parallel (Semaphore(6), Dispatchers.Default)  ← auth'd Ktor client
+      ├─> Downscales issue photos to 800px WebP (plan image kept as-is)
+      ├─> Base64-encodes to "data:<sniffed mime>;base64,..." data URIs
       ├─> buildReportHtml() embeds data URIs in inline-styled HTML
       └─> exporter(html, jobName, baseUrl) → platform actual
 
@@ -101,5 +103,6 @@ iOS (ReportExporter.ios.kt):
 |------|------|
 | `ui/screens/ReportScreen.kt` | Report UI, `exportPdf()`, `buildReportHtml()`. Page 1 = summary + plan image with every location pin & issue dot overlaid (positioned by their `x`/`y` percentages, colored by worst status); each location's issues then start on their own page (`page-break-before`). Per-issue block mirrors the Snag Assure layout: `#shortid - title`, status/priority badges, assigned-to, category·type, item, location, created date, `x/y` coords + primary photo top-right, remaining photos in a bordered gallery. Fields absent from our model (due date, cost, creator name) are omitted. |
 | `ui/ReportExporter.kt` | `expect fun rememberReportExporter()` |
+| `androidMain/.../ui/components/ImageCodec.android.kt` | `compressWebp` / `decodeScaled` / `downscaleImage` — shared by the picker, the annotator, and the report |
 | `androidMain/.../ReportExporter.android.kt` | WebView + PrintManager, JS bridge |
 | `iosMain/.../ReportExporter.ios.kt` | Stub |

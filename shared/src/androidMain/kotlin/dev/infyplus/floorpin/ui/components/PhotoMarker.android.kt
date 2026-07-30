@@ -6,7 +6,6 @@ import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import androidx.compose.ui.graphics.toArgb
-import java.io.ByteArrayOutputStream
 
 internal actual fun flattenImageWithStrokes(
     imageBytes: ByteArray,
@@ -44,21 +43,16 @@ internal actual fun flattenImageWithStrokes(
         canvas.drawPath(path, paint)
     }
 
-    return ByteArrayOutputStream().use { out ->
-        bmp.compress(Bitmap.CompressFormat.JPEG, 92, out)
-        out.toByteArray()
-    }
+    // Re-encode at the same quality as the original upload — annotating a photo shouldn't grow it.
+    return bmp.compressWebp(IMAGE_QUALITY).also { bmp.recycle() }
 }
 
-internal actual fun rotateJpeg(imageBytes: ByteArray, degrees: Int): ByteArray {
+internal actual fun rotateImage(imageBytes: ByteArray, degrees: Int): ByteArray {
     val src = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size) ?: return imageBytes
     val rotated = Bitmap.createBitmap(
         src, 0, 0, src.width, src.height,
         Matrix().apply { postRotate(degrees.toFloat()) }, true,
     )
     if (src !== rotated) src.recycle()
-    return ByteArrayOutputStream().use { out ->
-        rotated.compress(Bitmap.CompressFormat.JPEG, 92, out)
-        out.toByteArray()
-    }
+    return rotated.compressWebp(IMAGE_QUALITY).also { rotated.recycle() }
 }

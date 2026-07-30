@@ -56,7 +56,7 @@ data class PhotoMarkerResult(
     val fileName: String,
 )
 
-/** Platform-specific: composites strokes onto image bytes, returns JPEG. */
+/** Platform-specific: composites strokes onto image bytes, returns WebP. */
 internal expect fun flattenImageWithStrokes(
     imageBytes: ByteArray,
     displayWidth: Int,
@@ -64,8 +64,12 @@ internal expect fun flattenImageWithStrokes(
     strokes: List<DrawnStroke>,
 ): ByteArray
 
-/** Platform-specific: rotate JPEG bytes clockwise by [degrees] (90/180/270), returns JPEG. */
-internal expect fun rotateJpeg(imageBytes: ByteArray, degrees: Int): ByteArray
+/** Platform-specific: rotate image bytes clockwise by [degrees] (90/180/270), returns WebP. */
+internal expect fun rotateImage(imageBytes: ByteArray, degrees: Int): ByteArray
+
+/** Platform-specific: re-encode to at most [maxEdge] px on the longest side. Returns the input
+ *  unchanged when it is already small enough (or on decode failure). */
+internal expect fun downscaleImage(imageBytes: ByteArray, maxEdge: Int, quality: Int): ByteArray
 
 private val MARKER_COLORS = listOf(
     Color(0xFFE53935), // red
@@ -120,8 +124,13 @@ private fun PhotoMarkerDialog(
     onDone: (ByteArray) -> Unit,
     onCancel: () -> Unit,
 ) {
-    // Working bytes: rotate re-orients these so display + flatten stay in sync.
-    var bytes by remember(imageBytes) { mutableStateOf(imageBytes) }
+    // Working bytes: rotate re-orients these so display + flatten stay in sync. Rotation is always
+    // re-derived from the source rather than applied to the previous result — the button only turns
+    // clockwise, so rotating left is three taps, which would otherwise stack three lossy re-encodes.
+    var rotation by remember(imageBytes) { mutableStateOf(0) }
+    val bytes = remember(imageBytes, rotation) {
+        if (rotation == 0) imageBytes else rotateImage(imageBytes, rotation)
+    }
     val strokes = remember { mutableStateListOf<DrawnStroke>() }
     var currentStroke by remember { mutableStateOf<List<Offset>?>(null) }
     var selectedColor by remember { mutableStateOf(MARKER_COLORS[0]) }
@@ -232,7 +241,7 @@ private fun PhotoMarkerDialog(
                     // rotate 90° CW (clears strokes — their coords belong to the old orientation)
                     Surface(
                         onClick = {
-                            bytes = rotateJpeg(bytes, 90)
+                            rotation = (rotation + 90) % 360
                             strokes.clear()
                             currentStroke = null
                         },

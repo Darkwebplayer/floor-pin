@@ -14,15 +14,15 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.FileProvider
 import dev.infyplus.floorpin.data.nowMillis
+import dev.infyplus.floorpin.ui.components.IMAGE_QUALITY
+import dev.infyplus.floorpin.ui.components.MAX_EDGE
+import dev.infyplus.floorpin.ui.components.compressWebp
+import dev.infyplus.floorpin.ui.components.decodeScaled
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
 import java.io.File
-
-private const val MAX_EDGE = 1600
-private const val JPEG_QUALITY = 80
 
 /** Rotate/flip [bmp] per the source EXIF orientation. BitmapFactory ignores EXIF, so
  *  without this, photos from devices that store rotation as metadata come out sideways. */
@@ -45,28 +45,12 @@ private fun applyExifOrientation(raw: ByteArray, bmp: Bitmap): Bitmap {
     return Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
 }
 
-/** Decode → apply EXIF orientation → downscale longest edge to MAX_EDGE → JPEG. Keeps uploads small. */
+/** Decode → downscale longest edge to MAX_EDGE → apply EXIF orientation → WebP. Keeps uploads small. */
 private fun processImage(raw: ByteArray): ByteArray {
-    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    BitmapFactory.decodeByteArray(raw, 0, raw.size, bounds)
-    var sample = 1
-    val longest = maxOf(bounds.outWidth, bounds.outHeight)
-    while (longest / sample > MAX_EDGE * 2) sample *= 2
-    val opts = BitmapFactory.Options().apply { inSampleSize = sample }
-    val decoded = BitmapFactory.decodeByteArray(raw, 0, raw.size, opts) ?: return raw
+    val decoded = decodeScaled(raw, MAX_EDGE) ?: return raw
     val bmp = applyExifOrientation(raw, decoded)
-    val scaled = run {
-        val edge = maxOf(bmp.width, bmp.height)
-        if (edge <= MAX_EDGE) bmp
-        else {
-            val r = MAX_EDGE.toFloat() / edge
-            Bitmap.createScaledBitmap(bmp, (bmp.width * r).toInt(), (bmp.height * r).toInt(), true)
-        }
-    }
-    return ByteArrayOutputStream().use { out ->
-        scaled.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
-        out.toByteArray()
-    }
+    if (bmp !== decoded) decoded.recycle()
+    return bmp.compressWebp(IMAGE_QUALITY).also { bmp.recycle() }
 }
 
 @Composable
@@ -79,7 +63,7 @@ actual fun rememberImagePicker(onImage: (bytes: ByteArray, fileName: String) -> 
             val bytes = withContext(Dispatchers.IO) {
                 context.contentResolver.openInputStream(uri)?.use { processImage(it.readBytes()) }
             } ?: return@launch
-            onImage(bytes, "upload_${nowMillis()}.jpg")
+            onImage(bytes, "upload_${nowMillis()}.webp")
         }
     }
     return { launcher.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly)) }
@@ -100,7 +84,7 @@ actual fun rememberCameraCapture(onImage: (bytes: ByteArray, fileName: String) -
             val bytes = withContext(Dispatchers.IO) {
                 runCatching { processImage(tempFile.readBytes()) }.getOrNull()
             } ?: return@launch
-            onImage(bytes, "capture_${nowMillis()}.jpg")
+            onImage(bytes, "capture_${nowMillis()}.webp")
         }
     }
     return { launcher.launch(uri) }

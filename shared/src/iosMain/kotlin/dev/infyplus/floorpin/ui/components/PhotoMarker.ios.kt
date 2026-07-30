@@ -10,7 +10,12 @@ internal actual fun flattenImageWithStrokes(
     return imageBytes
 }
 
-internal actual fun rotateJpeg(imageBytes: ByteArray, degrees: Int): ByteArray {
+internal actual fun rotateImage(imageBytes: ByteArray, degrees: Int): ByteArray {
     // TODO: iOS — rotate via UIImage; picker/annotator are out of v1 iOS scope
+    return imageBytes
+}
+
+internal actual fun downscaleImage(imageBytes: ByteArray, maxEdge: Int, quality: Int): ByteArray {
+    // TODO: iOS — resize via UIGraphicsImageRenderer. Reports still export, just with heavier images.
     return imageBytes
 }

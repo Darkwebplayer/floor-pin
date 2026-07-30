@@ -51,6 +51,7 @@ import dev.infyplus.floorpin.ui.components.AppIcons
 import dev.infyplus.floorpin.ui.components.AppTopBar
 import dev.infyplus.floorpin.ui.components.ImageLightbox
 import dev.infyplus.floorpin.ui.components.StatusBadge
+import dev.infyplus.floorpin.ui.components.downscaleImage
 import dev.infyplus.floorpin.ui.components.photoImageUrl
 import dev.infyplus.floorpin.ui.rememberReportExporter
 import dev.infyplus.floorpin.ui.theme.Accent
@@ -64,12 +65,33 @@ import dev.infyplus.floorpin.ui.theme.White
 import floorpin.shared.generated.resources.Res
 import io.ktor.client.call.body
 import io.ktor.client.request.get
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import org.jetbrains.compose.resources.ExperimentalResourceApi
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
+
+/** Longest edge for issue photos embedded in the PDF. They render into a 180x200 CSS px box,
+ *  which is ~560px at the print raster's 300dpi — 800 leaves headroom without bloating the HTML. */
+private const val REPORT_PHOTO_EDGE = 800
+private const val REPORT_PHOTO_QUALITY = 75
+
+/** Data URIs need a concrete media type — the wildcard we used before is not one, and Chromium
+ *  only rendered it by sniffing. Read the magic bytes; stored objects predate the switch to WebP. */
+internal fun sniffImageMime(b: ByteArray): String = when {
+    b.size >= 3 && b[0] == 0xFF.toByte() && b[1] == 0xD8.toByte() -> "image/jpeg"
+    b.size >= 8 && b[0] == 0x89.toByte() && b[1] == 'P'.code.toByte() -> "image/png"
+    b.size >= 12 && b[0] == 'R'.code.toByte() && b[8] == 'W'.code.toByte() -> "image/webp"
+    b.size >= 6 && b[0] == 'G'.code.toByte() && b[1] == 'I'.code.toByte() -> "image/gif"
+    else -> "image/jpeg"
+}
 
 @OptIn(ExperimentalTime::class)
 private fun fmtDate(ms: Long): String =
@@ -264,8 +286,9 @@ private suspend fun exportPdf(
     open: Int,
     resolved: Int,
 ): Int {
+    val planImageUrl = floorPlan?.let { floorPlanImageUrl(it) }
     val seen = mutableSetOf<String>()
-    floorPlan?.let { floorPlanImageUrl(it) }?.let { seen.add(it) }
+    planImageUrl?.let { seen.add(it) }
     for (loc in withIssues) {
         for (issue in issuesByLoc[loc.id] ?: emptyList()) {
             // all evidence photos (the reference report shows a full gallery, not just the first)
@@ -275,20 +298,33 @@ private suspend fun exportPdf(
         }
     }
 
-    var failed = 0
-    val dataUris = mutableMapOf<String, String>()
-    for (url in seen) {
-        try {
-            val bytes: ByteArray = container.http.get(url).body()
-            dataUris[url] = "data:image/*;base64,${Base64.encode(bytes)}"
-        } catch (_: Exception) { failed++ }
+    // Fetch concurrently — awaiting each image in turn made a 40-photo export take tens of seconds.
+    // Bounded so a large report doesn't open 40 sockets against the Worker at once.
+    val gate = Semaphore(6)
+    val fetched = coroutineScope {
+        seen.map { url ->
+            // Off the main dispatcher: decoding and base64-ing megabytes of image would jank the UI.
+            async(Dispatchers.Default) {
+                gate.withPermit {
+                    runCatching {
+                        val bytes: ByteArray = container.http.get(url).body()
+                        // Issue photos print into a ~180x200px box, so the full 1600px upload was
+                        // ~8x the pixels needed; base64'd, that alone could OOM the print WebView.
+                        // The plan image prints near full page width, so it stays as uploaded.
+                        val out = if (url == planImageUrl) bytes else downscaleImage(bytes, REPORT_PHOTO_EDGE, REPORT_PHOTO_QUALITY)
+                        url to "data:${sniffImageMime(out)};base64,${Base64.encode(out)}"
+                    }.getOrNull()
+                }
+            }
+        }.awaitAll()
     }
+    val dataUris = fetched.filterNotNull().toMap()
+    val failed = fetched.count { it == null }
 
     // Bundled asset, not a network fetch — a failure here shouldn't count toward `failed`.
     val footerUri = runCatching { "data:image/png;base64,${Base64.encode(Res.readBytes("drawable/footer.png"))}" }
         .getOrDefault("")
 
-    val planImageUrl = floorPlan?.let { floorPlanImageUrl(it) }
     exporter(
         buildReportHtml(planName, planImageUrl, allLocations, allIssues, withIssues, issuesByLoc, photosByIssue, dataUris, allLocations.size, total, open, resolved, footerUri),
         "FloorPin — $planName",
