@@ -28,6 +28,13 @@ enum class SyncState { Idle, Syncing, Offline }
 // token expire, never does.
 internal const val MAX_ATTEMPTS = 5
 
+// Base poll interval. Doubles up to 4x while the queue isn't draining, so a stuck or failing server
+// isn't hammered every 15s — but capped deliberately low: there is no connectivity listener in the
+// app, so this poll is the only thing that notices an inspector walking back into signal. A longer
+// ceiling would leave them staring at the offline bar for minutes.
+private const val POLL_MS = 15_000L
+private const val MAX_BACKOFF_SHIFT = 2
+
 /** What to do with a queued op once the server has (or hasn't) ruled on it. */
 internal enum class OpOutcome { Dequeue, Bump, DeadLetter, Retry }
 
@@ -35,14 +42,25 @@ internal enum class OpOutcome { Dequeue, Bump, DeadLetter, Retry }
  * The dead-letter policy, kept pure so it can be tested without a database — this is the decision
  * that used to throw away the user's work.
  *
- * A [verdict] of null means the server returned no result for this op, which happens when it aborts
- * a batch mid-way. That is "unknown", not "done": the op stays queued and the attempt is not
- * counted, because penalising an op the server never even reached is how whole offline sessions
- * were being destroyed. Replaying is safe — creates are idempotent server-side.
+ * Mirrors the server's `sync-status.ts` split:
+ *  - `applied` / `stale` / `missing` — terminal, the server is in the state we wanted.
+ *  - `rejected` — permanent. The op is malformed or references something that can never exist, so
+ *    retrying cannot help; dead-letter on the first one rather than burning five round trips.
+ *  - `missing_parent` — the parent hasn't landed yet. Retryable, but bounded: if the parent op was
+ *    itself dead-lettered the parent will never arrive, and an unbounded retry would spin forever.
+ *  - `failed` — a transient server-side error. Retryable and bounded the same way.
+ *
+ * A null [verdict] means the server returned no result for this op at all. That is "unknown", not
+ * "done": it stays queued and is *not* charged an attempt, because penalising an op the server
+ * never reached is how whole offline sessions were being destroyed. Replaying is safe — creates are
+ * idempotent server-side. Any status this client doesn't recognise is treated the same way, so a
+ * new server status can never silently delete work.
  */
 internal fun opOutcome(verdict: String?, attempts: Long): OpOutcome = when (verdict) {
     "applied", "stale", "missing" -> OpOutcome.Dequeue
-    "rejected" -> if (attempts + 1 >= MAX_ATTEMPTS) OpOutcome.DeadLetter else OpOutcome.Bump
+    "rejected" -> OpOutcome.DeadLetter
+    "missing_parent", "failed" ->
+        if (attempts + 1 >= MAX_ATTEMPTS) OpOutcome.DeadLetter else OpOutcome.Bump
     else -> OpOutcome.Retry
 }
 
@@ -80,20 +98,28 @@ class SyncEngine(
     fun failedOps(): List<OutboxFailed> = data.q.outboxFailed().executeAsList()
 
     fun retryFailed() {
-        data.q.transaction { failedOps().forEach { data.q.retryFailed(it.opId) } }
+        data.q.transaction {
+            failedOps().forEach { data.q.retryFailed(it.opId) }
+            data.q.retryFailedPhotos()
+        }
         requestSync()
     }
 
     fun discardFailed() {
         data.q.discardFailed()
-        _failed.value = data.q.outboxFailedCount().executeAsOne()
+        _failed.value = data.q.outboxFailedCount().executeAsOne() + data.q.failedPhotoCount().executeAsOne()
     }
 
     init {
         scope.launch {
+            var idleRounds = 0
             while (isActive) {
                 flush()
-                delay(15_000)
+                // Back off while the queue isn't draining. The server asks for backoff on a
+                // `failed` verdict, and at a flat 15s a transient outage would spend an op's whole
+                // retry budget in 75 seconds. Resets the moment a flush comes back Idle.
+                idleRounds = if (_state.value == SyncState.Idle) 0 else (idleRounds + 1).coerceAtMost(MAX_BACKOFF_SHIFT)
+                delay(POLL_MS shl idleRounds)
             }
         }
     }
@@ -108,7 +134,7 @@ class SyncEngine(
         mutex.withLock {
             val queued = data.q.outboxPending().executeAsList()
             _pending.value = queued.size.toLong() + data.q.pendingPhotoCount().executeAsOne()
-            _failed.value = data.q.outboxFailedCount().executeAsOne()
+            _failed.value = data.q.outboxFailedCount().executeAsOne() + data.q.failedPhotoCount().executeAsOne()
             if (queued.isEmpty()) {
                 // Nothing in the JSON queue, but photos may still be waiting on issues that
                 // synced in an earlier pass.
@@ -139,7 +165,7 @@ class SyncEngine(
                             val photosDone = flushPhotos()
                             _pending.value = data.q.outboxCount().executeAsOne() +
                                 data.q.pendingPhotoCount().executeAsOne()
-                            _failed.value = data.q.outboxFailedCount().executeAsOne()
+                            _failed.value = data.q.outboxFailedCount().executeAsOne() + data.q.failedPhotoCount().executeAsOne()
                             _state.value =
                                 if (_pending.value == 0L && photosDone) SyncState.Idle else SyncState.Offline
                         }
@@ -217,8 +243,11 @@ class SyncEngine(
                 when (opOutcome(verdicts[row.entityId], row.attempts)) {
                     OpOutcome.Dequeue -> data.q.dequeue(row.opId)
                     OpOutcome.Bump -> data.q.bumpAttempts(row.opId)
-                    OpOutcome.DeadLetter ->
-                        data.q.markFailed(nowMillis(), "Server rejected ${row.op} ${row.entity}", row.opId)
+                    OpOutcome.DeadLetter -> data.q.markFailed(
+                        nowMillis(),
+                        "${row.op} ${row.entity}: ${verdicts[row.entityId] ?: "rejected"}",
+                        row.opId,
+                    )
                     OpOutcome.Retry -> Unit
                 }
             }

@@ -164,6 +164,10 @@ pendingPhotos:
 SELECT * FROM photo WHERE pending = 1 AND failedAt IS NULL ORDER BY createdAt ASC;
 pendingPhotoCount:
 SELECT count(*) FROM photo WHERE pending = 1 AND failedAt IS NULL;
+failedPhotoCount:
+SELECT count(*) FROM photo WHERE pending = 1 AND failedAt IS NOT NULL;
+retryFailedPhotos:
+UPDATE photo SET failedAt = NULL, attempts = 0 WHERE pending = 1 AND failedAt IS NOT NULL;
 photoBlobById:
 SELECT bytes FROM photoBlob WHERE photoId = ?;
 putPhotoBlob:

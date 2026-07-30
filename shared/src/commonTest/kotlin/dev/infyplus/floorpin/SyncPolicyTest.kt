@@ -20,11 +20,20 @@ class SyncPolicyTest {
         }
     }
 
-    @Test fun rejectedCountsTowardDeadLetter() =
-        assertEquals(OpOutcome.Bump, opOutcome("rejected", attempts = 0L))
+    // The server classifies `rejected` as permanent, so retrying it is five wasted round trips.
+    @Test fun rejectedDeadLettersImmediately() =
+        assertEquals(OpOutcome.DeadLetter, opOutcome("rejected", attempts = 0L))
 
-    @Test fun rejectedDeadLettersOnLastAttempt() =
-        assertEquals(OpOutcome.DeadLetter, opOutcome("rejected", attempts = MAX_ATTEMPTS - 1L))
+    // Retryable, but bounded: if the parent op was itself dead-lettered the parent never arrives.
+    @Test fun missingParentRetriesButIsBounded() {
+        assertEquals(OpOutcome.Bump, opOutcome("missing_parent", attempts = 0L))
+        assertEquals(OpOutcome.DeadLetter, opOutcome("missing_parent", attempts = MAX_ATTEMPTS - 1L))
+    }
+
+    @Test fun transientServerFailureRetriesButIsBounded() {
+        assertEquals(OpOutcome.Bump, opOutcome("failed", attempts = 0L))
+        assertEquals(OpOutcome.DeadLetter, opOutcome("failed", attempts = MAX_ATTEMPTS - 1L))
+    }
 
     // The regression that mattered: the server aborts a batch mid-way and returns no result for
     // this op. Treating that as a rejection is what destroyed whole offline sessions.
@@ -34,8 +43,11 @@ class SyncPolicyTest {
         assertEquals(OpOutcome.Retry, opOutcome(null, attempts = MAX_ATTEMPTS + 99L))
     }
 
-    @Test fun unknownVerdictIsTreatedAsNoVerdict() =
+    // A status added server-side that this build predates must never delete work.
+    @Test fun unknownVerdictIsTreatedAsNoVerdict() {
         assertEquals(OpOutcome.Retry, opOutcome("something_new_from_the_server", attempts = 0L))
+        assertEquals(OpOutcome.Retry, opOutcome("something_new_from_the_server", attempts = MAX_ATTEMPTS + 9L))
+    }
 
     @Test fun parentsSortBeforeChildren() {
         assertTrue(entityRank("projects") < entityRank("locations"))
