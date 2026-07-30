@@ -137,4 +137,5 @@ fun ProjectDto.toRow() = Project(id, name, description, parseIso(createdAt), par
 fun FloorPlanDto.toRow() = FloorPlan(id, projectId, name, null, imageKey, null, parseIso(createdAt), parseIso(updatedAt), width, height)
 fun LocationDto.toRow(planId: String) = Location(id, floorPlanId ?: planId, label ?: "Location", x, y, parseIso(updatedAt), parseIso(createdAt))
 fun IssueDto.toRow() = Issue(id, locationId ?: "", title, description, status, priority, type, x, y, parseIso(createdAt), parseIso(updatedAt), if (resolvedAt != null) parseIso(resolvedAt) else null, category, item, assignedTo)
-fun PhotoDto.toRow() = Photo(id, issueId ?: "", imageKey, null, parseIso(createdAt), caption)
+// A row from the server is uploaded by definition: pending = 0, no local bytes, no failure.
+fun PhotoDto.toRow() = Photo(id, issueId ?: "", imageKey, null, parseIso(createdAt), caption, 0, null, 0, null)

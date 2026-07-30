@@ -1,6 +1,8 @@
 package dev.infyplus.floorpin.ui.components
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.AlertDialog
@@ -20,7 +22,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import dev.infyplus.floorpin.ui.theme.Muted
 
-/** Reusable destructive-action confirmation. */
+/**
+ * Reusable destructive-action confirmation.
+ *
+ * [neutralLabel]/[onNeutral] add a third, non-destructive choice beside the danger button — for
+ * dialogs where "undo the problem" is as valid as "throw it away" (retry vs discard a failed sync).
+ */
 @Composable
 fun ConfirmDialog(
     title: String,
@@ -29,13 +36,20 @@ fun ConfirmDialog(
     loading: Boolean = false,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
+    neutralLabel: String? = null,
+    onNeutral: (() -> Unit)? = null,
 ) {
     AlertDialog(
         onDismissRequest = if (loading) ({}) else onDismiss,
         title = { Text(title) },
         text = { Text(message) },
         confirmButton = {
-            AppButton(confirmLabel, onClick = onConfirm, variant = ButtonVariant.Danger, loading = loading)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (neutralLabel != null && onNeutral != null) {
+                    AppButton(neutralLabel, onClick = onNeutral, variant = ButtonVariant.Neutral, enabled = !loading)
+                }
+                AppButton(confirmLabel, onClick = onConfirm, variant = ButtonVariant.Danger, loading = loading)
+            }
         },
         dismissButton = {
             AppButton("Cancel", onClick = onDismiss, variant = ButtonVariant.Neutral, enabled = !loading)

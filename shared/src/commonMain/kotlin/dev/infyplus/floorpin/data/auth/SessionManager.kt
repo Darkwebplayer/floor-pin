@@ -22,7 +22,19 @@ class SessionManager(
 
     suspend fun currentUser(): UserDto? = api.currentUser()
 
-    suspend fun signOut() {
+    /** Unsynced writes that signing out would destroy — `data.clear()` truncates the outbox. */
+    fun unsyncedCount(): Long = data.pendingOpCount()
+
+    /**
+     * Signs out and wipes the local database.
+     *
+     * Refuses while writes are still queued unless [force] is set: `data.clear()` truncates the
+     * outbox, so signing out on a flaky connection silently threw away the user's whole offline
+     * session. Callers should check [unsyncedCount] and confirm before forcing.
+     */
+    suspend fun signOut(force: Boolean = false) {
+        val pending = unsyncedCount()
+        if (pending > 0 && !force) error("$pending unsynced change${if (pending == 1L) "" else "s"} would be lost")
         runCatching { api.signOut() }
         tokens.clear()
         data.clear()

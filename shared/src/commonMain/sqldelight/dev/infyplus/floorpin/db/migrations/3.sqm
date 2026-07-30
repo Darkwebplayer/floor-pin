@@ -1,0 +1,3 @@
+-- v3 → v4: dead-lettered outbox ops are kept and surfaced instead of silently deleted.
+ALTER TABLE outbox ADD COLUMN failedAt INTEGER;
+ALTER TABLE outbox ADD COLUMN lastError TEXT;

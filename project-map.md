@@ -13,9 +13,10 @@ Timestamps are epoch ms (`INTEGER`). IDs are client/server UUIDs (`TEXT`). Write
 | **floorPlan** | `id`, `projectId`, `name`, `sub`, `imageKey`, `imageUrl`, `width`, `height`, `createdAt`, `updatedAt` | Building plan images uploaded to R2 |
 | **location** | `id`, `floorPlanId`, `name`, `x`, `y`, `createdAt`, `updatedAt` | Draggable pins on the floor plan canvas |
 | **issue** | `id`, `locationId`, `title`, `description`, `status`, `priority`, `type`, `category`, `item`, `assignedTo`, `x`, `y`, `createdAt`, `updatedAt`, `resolvedAt` | Snags/defects under a location pin |
-| **photo** | `id`, `issueId`, `imageKey`, `imageUrl`, `caption`, `createdAt` | Images attached to issues (stored in R2) |
+| **photo** | `id`, `issueId`, `imageKey`, `imageUrl`, `caption`, `createdAt`, `pending`, `fileName`, `attempts`, `failedAt` | Images attached to issues. `pending = 1` → bytes still local, `imageKey` null |
+| **photoBlob** | `photoId`, `bytes` | Bytes of photos awaiting upload; side table so no list query drags a BLOB through a cursor |
 | **activity** | `id`, `entityType`, `entityId`, `action`, `actor`, `summary`, `createdAt` | Audit log entries |
-| **outbox** | `opId`, `entity`, `op`, `entityId`, `payload`, `updatedAt`, `attempts` | Queued offline mutations for sync |
+| **outbox** | `opId`, `entity`, `op`, `entityId`, `payload`, `updatedAt`, `attempts`, `failedAt`, `lastError` | Queued offline mutations for sync. `failedAt` set → dead-lettered, excluded from sends but kept and shown |
 
 ### Relationships
 ```
@@ -34,6 +35,8 @@ issue 1──N photo
 ### DB migrations (`migrations/`)
 - `1.sqm` — added `width`/`height` to floorPlan, `createdAt` to location, `category`/`assignedTo` to issue, `caption` to photo
 - `2.sqm` — added `item` to issue
+- `3.sqm` — added `failedAt`/`lastError` to outbox (dead-letters are kept, not deleted)
+- `4.sqm` — added `pending`/`fileName`/`attempts`/`failedAt` to photo + the `photoBlob` table (offline photos)
 
 ## Important Folders
 - **`shared/src/commonMain/`** — bulk of the app (KMP shared code)
@@ -58,8 +61,12 @@ issue 1──N photo
 - **Manual Ktor multipart** — raw `PartData` objects instead of `formData{}` DSL (avoids duplicate Content-Disposition headers breaking Cloudflare Workers)
 - **Hand-ported SVG icons** — `AppIcons.kt` converts SVG path data into Compose `ImageVector` objects (avoids Material icon artifacts on multiplatform)
 - **Client-generated UUIDs** — app creates its own IDs for offline records (idempotent sync)
-- **Last-write-wins sync** — outbox carries `updatedAt`; server skips stale ops. `Outbox.enqueue` coalesces pending `update` ops for the same entity into one (merging fields, newest wins) to bound queue growth. `SyncEngine` retries indefinitely while offline (network failure never counts attempts), but dead-letters an op after `MAX_ATTEMPTS` (5) server *rejections* so one poison op can't block the queue.
-- **Write paths differ by entity** — **locations & issues** write local + outbox (offline-capable, LWW via sync). **Projects, floor plans, photos** are **online-only** direct REST (`ProjectRepo`/`FloorPlanRepo` have no outbox; create/update/delete call `ApiService` then cache the response, surfacing `error` on failure). Full CRUD exists everywhere except: floor plans are delete-only (no server PATCH — name set at upload). Deletes go through a shared `ConfirmDialog`. Note: the issue `item` field is client/local-only — it's not in the server's `/api/sync` whitelist or REST body, so edits to it don't round-trip to the backend.
+- **Last-write-wins sync** — outbox carries `updatedAt`; server skips stale ops. `Outbox.enqueue` coalesces pending `update` ops for the same entity into one (merging fields, newest wins) to bound queue growth, **carrying `attempts` forward** so an actively-edited poison op still ages out.
+- **Per-op sync reconciliation** — `ApiService.sync()` returns the status *and* the `SyncResponse` body; `SyncEngine.applyResults` dequeues each op by its own verdict (`opOutcome`, unit-tested in `SyncPolicyTest`). Only an explicit per-op `rejected` counts toward dead-lettering. An op with **no verdict** (the server aborts a batch mid-way and returns none) stays queued and is *not* charged an attempt. Auth failures (401/403) and transport failures never charge an attempt either. A dead-lettered op is **kept** (`outbox.failedAt`/`lastError`) and surfaced in a red `SyncBar` with retry/discard — it used to be `DELETE`d, which cleared the offline banner and read as "synced" while the work was gone.
+- **Parents before children** — the batch is sorted by `entityRank` (projects → locations → issues) before sending, not by `updatedAt`, which is non-unique wall-clock time and gets re-stamped by coalescing. Stops an issue create landing ahead of its location create (a server-side FK error).
+- **Sign-out guards unsynced work** — `data.clear()` truncates the outbox, so `SessionManager.signOut()` refuses unless `force = true`; `MainShell` confirms first.
+- **Photos are offline-first** — a photo becomes a `photo` row the instant it is taken (`pending = 1`, bytes in the `photoBlob` side table), *before* any network call; `SyncEngine.flushPhotos()` uploads it after the outbox drains, since `issue_photos.issue_id` is a server-side FK. Photos whose parent issue is still queued are skipped, not attempted. The blob is never selected by a list query (`ReportScreen` observes every photo on a plan) — `photoImageModel()` fetches bytes one at a time and returns `Any?` so Coil renders a `ByteArray` for a pending photo and a URL otherwise. Uploads send the client-minted photo id so a retry after a lost response updates the row instead of duplicating it (**requires the server to honour `id` on `POST /issues/:id/photos`**).
+- **Write paths differ by entity** — **locations, issues & issue photos** write local first (offline-capable). **Projects and floor plans** are **online-only** direct REST (`ProjectRepo`/`FloorPlanRepo` have no outbox; create/update/delete call `ApiService` then cache the response, surfacing `error` on failure). Full CRUD exists everywhere except: floor plans are delete-only (no server PATCH — name set at upload). Deletes go through a shared `ConfirmDialog`. Note: the issue `item` field is client/local-only — it's not in the server's `/api/sync` whitelist or REST body, so edits to it don't round-trip to the backend.
 - **Manual DI** — `AppContainer` class, built once per platform; no Hilt/Koin
 - **Single `floorpin.sq` file** — all SQLDelight schema + queries in one file (7 tables, full CRUD + upserts)
 - **HTML→PDF via WebView** — report export builds HTML in Kotlin, renders in platform WebView, prints via PrintDocumentAdapter. Images are pre-fetched **concurrently** (bounded by a `Semaphore(6)`, on `Dispatchers.Default`) through the auth'd Ktor client and embedded as base64 data URIs (avoids WebView auth/CORS/ORB issues). JS image-load detection via `@JavascriptInterface` waits for all `<img>` elements to settle before printing. WebView is briefly attached to the decor view (1×1 px invisible) so layout completes.

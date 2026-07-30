@@ -22,7 +22,21 @@ import dev.infyplus.floorpin.Config
 import dev.infyplus.floorpin.db.Photo
 import dev.infyplus.floorpin.ui.theme.White
 
-/** Resolves a stored photo to a displayable URL (prefers server `imageUrl`, falls back to `/files/<key>`). */
+/**
+ * Resolves a photo to something Coil can render: the local bytes while it is still queued for
+ * upload, otherwise the server `imageUrl`, otherwise `/files/<key>`.
+ *
+ * Returns `Any?` rather than `String?` because a pending photo has no URL — its bytes only exist on
+ * this device. Coil's `model` is `Any?` and the app's loader keeps the default `ByteArrayFetcher`
+ * (`App.kt` adds components rather than replacing them), so a `ByteArray` renders as-is.
+ *
+ * [bytesFor] is injected so this stays free of a database dependency; callers pass the repo lookup.
+ */
+fun photoImageModel(photo: Photo, bytesFor: (String) -> ByteArray?): Any? =
+    if (photo.pending == 1L) bytesFor(photo.id)
+    else photo.imageUrl ?: photo.imageKey?.let { "${Config.BASE_URL}/files/$it" }
+
+/** URL-only resolution, for callers that genuinely need a URL string (the PDF export fetches over HTTP). */
 fun photoImageUrl(photo: Photo): String? =
     photo.imageUrl ?: photo.imageKey?.let { "${Config.BASE_URL}/files/$it" }
 
@@ -31,7 +45,7 @@ fun photoImageUrl(photo: Photo): String? =
  * Pass [onDelete] to show a delete control in the top bar (e.g. for issue photos).
  */
 @Composable
-fun ImageLightbox(url: String?, onDelete: (() -> Unit)? = null, onDismiss: () -> Unit) {
+fun ImageLightbox(url: Any?, onDelete: (() -> Unit)? = null, onDismiss: () -> Unit) {
     if (url == null) return
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(color = Color.Black.copy(alpha = 0.94f), modifier = Modifier.fillMaxSize()) {

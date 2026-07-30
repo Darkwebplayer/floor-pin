@@ -1,0 +1,12 @@
+-- v4 → v5: photos survive offline. A photo row now exists from the moment it is taken, with its
+-- bytes parked in photoBlob until the upload lands. Existing rows came from the server, so they
+-- default to pending = 0 and own no blob.
+ALTER TABLE photo ADD COLUMN pending INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE photo ADD COLUMN fileName TEXT;
+ALTER TABLE photo ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE photo ADD COLUMN failedAt INTEGER;
+
+CREATE TABLE photoBlob (
+  photoId TEXT NOT NULL PRIMARY KEY,
+  bytes BLOB NOT NULL
+);

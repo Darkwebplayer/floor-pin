@@ -34,14 +34,18 @@ class Outbox(private val q: FloorpinQueries) {
                     }
                     data.forEach { (k, v) -> put(k, v) }
                 }
+                // Carry the attempt count forward. Resetting it to 0 here meant an op the server keeps
+                // rejecting could never age out as long as the user kept editing that row — it stayed
+                // in every batch, failing forever, while its innocent neighbours took the blame.
+                val attempts = pending.maxOf { it.attempts }
                 q.transaction {
                     pending.forEach { q.dequeue(it.opId) }
-                    q.enqueue(newId(), entity, op, entityId, encode(merged), updatedAt)
+                    q.enqueue(newId(), entity, op, entityId, encode(merged), updatedAt, attempts)
                 }
                 return
             }
         }
-        q.enqueue(newId(), entity, op, entityId, encode(data), updatedAt)
+        q.enqueue(newId(), entity, op, entityId, encode(data), updatedAt, 0)
     }
 
     private fun encode(data: JsonObject) =
@@ -145,7 +149,36 @@ class IssueRepo(private val q: FloorpinQueries, private val outbox: Outbox) {
             if (item != null) put("item", item)
         }, now)
     }
-    fun deletePhoto(id: String) = q.deletePhoto(id)
+    /**
+     * Records a photo the moment it is taken, before any network call. The row is visible to the UI
+     * immediately and the bytes are durable, so a failed or absent connection can no longer lose the
+     * photo — which is exactly what the old upload-then-persist order did.
+     */
+    fun createLocalPhoto(issueId: String, bytes: ByteArray, fileName: String, caption: String? = null): Photo {
+        val photo = Photo(newId(), issueId, null, null, nowMillis(), caption, pending = 1, fileName = fileName, attempts = 0, failedAt = null)
+        q.transaction {
+            q.upsertPhoto(photo.id, photo.issueId, null, null, photo.createdAt, caption, 1, fileName, 0, null)
+            q.putPhotoBlob(photo.id, bytes)
+        }
+        return photo
+    }
+
+    fun pendingPhotos(): List<Photo> = q.pendingPhotos().executeAsList()
+    fun photoBytes(photoId: String): ByteArray? = q.photoBlobById(photoId).executeAsOneOrNull()
+
+    /** Bytes are in R2 now; the local copy is dead weight. */
+    fun markPhotoUploaded(photoId: String, imageKey: String?) = q.transaction {
+        q.markPhotoUploaded(imageKey, photoId)
+        q.deletePhotoBlob(photoId)
+    }
+
+    fun bumpPhotoAttempts(photoId: String) = q.bumpPhotoAttempts(photoId)
+    fun markPhotoFailed(photoId: String) = q.markPhotoFailed(nowMillis(), photoId)
+
+    fun deletePhoto(id: String) = q.transaction {
+        q.deletePhoto(id)
+        q.deletePhotoBlob(id)
+    }
     fun updateStatus(id: String, status: IssueStatus) {
         val now = nowMillis()
         val resolvedAt = if (status == IssueStatus.RESOLVED) now else null
@@ -159,8 +192,9 @@ class IssueRepo(private val q: FloorpinQueries, private val outbox: Outbox) {
     fun upsertFromServer(issues: List<Issue>) = q.transaction {
         issues.forEach { q.upsertIssue(it.id, it.locationId, it.title, it.description, it.status, it.priority, it.type, it.x, it.y, it.createdAt, it.updatedAt, it.resolvedAt, it.category, it.item, it.assignedTo) }
     }
+    /** Server rows are by definition uploaded, so they land with `pending = 0` and no blob. */
     fun upsertPhotos(photos: List<Photo>) = q.transaction {
-        photos.forEach { q.upsertPhoto(it.id, it.issueId, it.imageKey, it.imageUrl, it.createdAt, it.caption) }
+        photos.forEach { q.upsertPhoto(it.id, it.issueId, it.imageKey, it.imageUrl, it.createdAt, it.caption, 0, null, 0, null) }
     }
 }
 

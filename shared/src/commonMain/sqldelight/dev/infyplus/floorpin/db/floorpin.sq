@@ -50,13 +50,26 @@ CREATE TABLE issue (
   assignedTo TEXT
 );
 
+-- A photo exists as a row from the moment it is taken. `pending = 1` means the bytes are still in
+-- photoBlob and have not reached R2 yet; imageKey stays NULL until they do.
 CREATE TABLE photo (
   id TEXT NOT NULL PRIMARY KEY,
   issueId TEXT NOT NULL,
   imageKey TEXT,
   imageUrl TEXT,
   createdAt INTEGER NOT NULL DEFAULT 0,
-  caption TEXT
+  caption TEXT,
+  pending INTEGER NOT NULL DEFAULT 0,
+  fileName TEXT,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  failedAt INTEGER
+);
+
+-- Bytes for photos awaiting upload. Kept in a side table so that no list query ever drags a blob
+-- through a cursor — ReportScreen observes every photo on a floor plan.
+CREATE TABLE photoBlob (
+  photoId TEXT NOT NULL PRIMARY KEY,
+  bytes BLOB NOT NULL
 );
 
 CREATE TABLE activity (
@@ -77,7 +90,9 @@ CREATE TABLE outbox (
   entityId TEXT NOT NULL,
   payload TEXT NOT NULL,       -- JSON body for the op
   updatedAt INTEGER NOT NULL,
-  attempts INTEGER NOT NULL DEFAULT 0
+  attempts INTEGER NOT NULL DEFAULT 0,
+  failedAt INTEGER,            -- set once the server has rejected it MAX_ATTEMPTS times
+  lastError TEXT               -- why, so the user isn't told "pending" forever with no cause
 );
 
 -- ── project ──
@@ -141,7 +156,27 @@ SELECT photo.* FROM photo
   JOIN location ON issue.locationId = location.id
   WHERE location.floorPlanId = ?;
 upsertPhoto:
-INSERT OR REPLACE INTO photo(id, issueId, imageKey, imageUrl, createdAt, caption) VALUES (?, ?, ?, ?, ?, ?);
+INSERT OR REPLACE INTO photo(id, issueId, imageKey, imageUrl, createdAt, caption, pending, fileName, attempts, failedAt)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+-- ── pending photo queue ──
+-- Oldest first, so a long offline session uploads in the order the inspector shot them.
+pendingPhotos:
+SELECT * FROM photo WHERE pending = 1 AND failedAt IS NULL ORDER BY createdAt ASC;
+pendingPhotoCount:
+SELECT count(*) FROM photo WHERE pending = 1 AND failedAt IS NULL;
+photoBlobById:
+SELECT bytes FROM photoBlob WHERE photoId = ?;
+putPhotoBlob:
+INSERT OR REPLACE INTO photoBlob(photoId, bytes) VALUES (?, ?);
+deletePhotoBlob:
+DELETE FROM photoBlob WHERE photoId = ?;
+-- Upload succeeded: adopt the server's key and drop the local copy of the bytes.
+markPhotoUploaded:
+UPDATE photo SET pending = 0, imageKey = ?, attempts = 0, failedAt = NULL WHERE id = ?;
+bumpPhotoAttempts:
+UPDATE photo SET attempts = attempts + 1 WHERE id = ?;
+markPhotoFailed:
+UPDATE photo SET failedAt = ? WHERE id = ?;
 deletePhoto:
 DELETE FROM photo WHERE id = ?;
 
@@ -153,17 +188,32 @@ INSERT OR REPLACE INTO activity(id, entityType, entityId, action, actor, summary
 
 -- ── outbox ──
 enqueue:
-INSERT OR REPLACE INTO outbox(opId, entity, op, entityId, payload, updatedAt, attempts) VALUES (?, ?, ?, ?, ?, ?, 0);
+INSERT OR REPLACE INTO outbox(opId, entity, op, entityId, payload, updatedAt, attempts, failedAt, lastError)
+VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL);
+-- Only ops that haven't dead-lettered are worth sending. A failed op stays in the table so the
+-- user can be told about it; excluding it here is what stops it blocking everything behind it.
 outboxPending:
-SELECT * FROM outbox ORDER BY updatedAt ASC;
+SELECT * FROM outbox WHERE failedAt IS NULL ORDER BY updatedAt ASC;
 outboxUpdatesFor:
-SELECT * FROM outbox WHERE entity = ? AND entityId = ? AND op = 'update';
+SELECT * FROM outbox WHERE entity = ? AND entityId = ? AND op = 'update' AND failedAt IS NULL;
 outboxCount:
-SELECT count(*) FROM outbox;
+SELECT count(*) FROM outbox WHERE failedAt IS NULL;
+outboxFailed:
+SELECT * FROM outbox WHERE failedAt IS NOT NULL ORDER BY failedAt DESC;
+outboxFailedCount:
+SELECT count(*) FROM outbox WHERE failedAt IS NOT NULL;
 dequeue:
 DELETE FROM outbox WHERE opId = ?;
 bumpAttempts:
 UPDATE outbox SET attempts = attempts + 1 WHERE opId = ?;
+-- Dead-letter: keep the row and the payload so the failure is inspectable and recoverable.
+markFailed:
+UPDATE outbox SET failedAt = ?, lastError = ? WHERE opId = ?;
+-- User-driven "try again" on a dead-lettered op.
+retryFailed:
+UPDATE outbox SET failedAt = NULL, lastError = NULL, attempts = 0 WHERE opId = ?;
+discardFailed:
+DELETE FROM outbox WHERE failedAt IS NOT NULL;
 
 -- ── maintenance ──
 clearAll {
@@ -172,6 +222,7 @@ DELETE FROM floorPlan;
 DELETE FROM location;
 DELETE FROM issue;
 DELETE FROM photo;
+DELETE FROM photoBlob;
 DELETE FROM activity;
 DELETE FROM outbox;
 }

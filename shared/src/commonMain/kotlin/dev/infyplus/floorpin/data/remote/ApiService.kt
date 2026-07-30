@@ -35,6 +35,17 @@ import kotlinx.serialization.json.put
 private const val BASE = Config.BASE_URL
 
 /**
+ * The server answered, and the answer was an error.
+ *
+ * Distinct from the transport failures Ktor throws, because retry policy hinges on the difference:
+ * a refusal is the request's fault and should eventually be given up on, while an unreachable server
+ * is temporary and must never count against a queued item. Conflating the two is what let a short
+ * tunnel destroy an inspector's offline session.
+ */
+class ApiHttpException(val status: HttpStatusCode, val detail: String) :
+    Exception("Server returned ${status.value}${if (detail.isEmpty()) "" else ": $detail"}")
+
+/**
  * Media type read from the leading magic bytes rather than the filename. The encoder picks the
  * format (and can fall back), so the extension is a hint, not a fact — and an upload labelled with
  * the wrong type is stored that way in R2 and served back wrong forever.
@@ -90,7 +101,7 @@ class ApiService(private val client: HttpClient) {
     private suspend inline fun <reified T> HttpResponse.bodyOrThrow(): T {
         if (!status.isSuccess()) {
             val detail = runCatching { bodyAsText() }.getOrDefault("").trim().take(300)
-            error("Server returned ${status.value}${if (detail.isEmpty()) "" else ": $detail"}")
+            throw ApiHttpException(status, detail)
         }
         return body()
     }
@@ -145,9 +156,17 @@ class ApiService(private val client: HttpClient) {
         client.get("$BASE/api/locations/$locationId/issues").body()
     suspend fun issue(id: String): IssueDto = client.get("$BASE/api/issues/$id").body()
 
-    suspend fun uploadPhoto(issueId: String, bytes: ByteArray, filename: String): PhotoDto =
+    /**
+     * [photoId] is the client-minted id, sent so a retry after a lost response updates the same row
+     * instead of creating a second photo and a second R2 object. Requires the server to honour
+     * `id` on this endpoint; until it does, the field is ignored and retries can duplicate.
+     */
+    suspend fun uploadPhoto(issueId: String, bytes: ByteArray, filename: String, photoId: String? = null, caption: String? = null): PhotoDto =
         client.post("$BASE/api/issues/$issueId/photos") {
-            setBody(multipart(bytes, filename))
+            setBody(multipart(bytes, filename, extra = buildMap {
+                photoId?.let { put("id", it) }
+                caption?.let { put("caption", it) }
+            }))
         }.bodyOrThrow()
     suspend fun deletePhoto(id: String) { client.delete("$BASE/api/photos/$id") }
 
@@ -158,13 +177,21 @@ class ApiService(private val client: HttpClient) {
         client.get("$BASE/api/activity/entity/$type/$id").body()
 
     // ── sync ──
-    // Returns the HTTP status only — per-op results (applied/stale/missing) are all terminal, so the
-    // engine dequeues on 2xx regardless. A non-2xx status tells the engine the server rejected the batch.
-    suspend fun sync(ops: List<SyncOp>): HttpStatusCode =
-        client.post("$BASE/api/sync") {
+    // Returns the status AND the per-op results. The engine needs both: the status distinguishes
+    // "server rejected everything" from "server processed the batch", and `results` says which
+    // individual ops landed. Dequeuing the whole batch on a 2xx — as this used to — throws away ops
+    // the server reported as rejected, and penalising the whole batch on a non-2xx dead-letters
+    // ops that were never the problem.
+    suspend fun sync(ops: List<SyncOp>): Pair<HttpStatusCode, SyncResponse?> {
+        val resp = client.post("$BASE/api/sync") {
             contentType(ContentType.Application.Json)
             setBody(SyncRequest(ops))
-        }.status
+        }
+        // A 2xx with an unreadable body is treated as "no results" — the engine then keeps the ops
+        // queued rather than guessing, which is the safe direction (creates are idempotent).
+        val parsed = if (resp.status.isSuccess()) runCatching { resp.body<SyncResponse>() }.getOrNull() else null
+        return resp.status to parsed
+    }
 
     // ── admin ──
     suspend fun users(): List<UserDto> = client.get("$BASE/api/admin/users").body<ListUsersResponse>().users

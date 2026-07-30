@@ -8,6 +8,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -58,7 +59,7 @@ import dev.infyplus.floorpin.ui.components.ButtonVariant
 import dev.infyplus.floorpin.ui.components.ConfirmDialog
 import dev.infyplus.floorpin.ui.components.ImageLightbox
 import dev.infyplus.floorpin.ui.components.StatusBadge
-import dev.infyplus.floorpin.ui.components.photoImageUrl
+import dev.infyplus.floorpin.ui.components.photoImageModel
 import dev.infyplus.floorpin.ui.components.rememberValidator
 import dev.infyplus.floorpin.ui.components.validateRequired
 import dev.infyplus.floorpin.ui.components.rememberPhotoMarker
@@ -265,7 +266,8 @@ private fun IssueDetail(vm: ViewerViewModel, location: Location, issue: Issue, o
     val photos by remember(issue.id) { vm.observePhotos(issue.id) }.collectAsStateWithLifecycle(emptyList())
     var lightboxPhoto by remember { mutableStateOf<Photo?>(null) }
     var showEdit by remember { mutableStateOf(false) }
-    var deletePhotoId by remember { mutableStateOf<String?>(null) }
+    // id + whether it is still queued locally; a pending photo deletes without a server round trip.
+    var deletePhotoId by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
     var confirmDelete by remember { mutableStateOf(false) }
     val annotate = rememberPhotoMarker()
     val pick = rememberImagePicker { bytes, name ->
@@ -304,17 +306,23 @@ private fun IssueDetail(vm: ViewerViewModel, location: Location, issue: Issue, o
         if (photos.isNotEmpty()) {
             FlowRow(Modifier.fillMaxWidth().padding(vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 photos.forEach { p ->
-                    photoImageUrl(p)?.let { url ->
-                        AsyncImage(
-                            model = url,
-                            contentDescription = "Photo",
-                            modifier = Modifier.size(72.dp)
-                                .background(SurfaceWarm, RoundedCornerShape(8.dp))
-                                .border(1.dp, BorderColor, RoundedCornerShape(8.dp))
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { lightboxPhoto = p },
-                            contentScale = ContentScale.Crop,
-                        )
+                    photoImageModel(p, vm::photoBytes)?.let { model ->
+                        Box {
+                            AsyncImage(
+                                model = model,
+                                contentDescription = "Photo",
+                                modifier = Modifier.size(72.dp)
+                                    .background(SurfaceWarm, RoundedCornerShape(8.dp))
+                                    .border(1.dp, BorderColor, RoundedCornerShape(8.dp))
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { lightboxPhoto = p },
+                                contentScale = ContentScale.Crop,
+                            )
+                            // Per-photo status. The old single `vm.uploading` flag couldn't say
+                            // which of several photos is still waiting, or which gave up.
+                            if (p.failedAt != null) PhotoBadge("!", Danger)
+                            else if (p.pending == 1L) PhotoBadge("↑", Muted)
+                        }
                     }
                 }
             }
@@ -337,8 +345,8 @@ private fun IssueDetail(vm: ViewerViewModel, location: Location, issue: Issue, o
 
     lightboxPhoto?.let { p ->
         ImageLightbox(
-            url = photoImageUrl(p),
-            onDelete = { deletePhotoId = p.id; lightboxPhoto = null },
+            url = photoImageModel(p, vm::photoBytes),
+            onDelete = { deletePhotoId = p.id to (p.pending == 1L); lightboxPhoto = null },
             onDismiss = { lightboxPhoto = null },
         )
     }
@@ -349,12 +357,13 @@ private fun IssueDetail(vm: ViewerViewModel, location: Location, issue: Issue, o
             vm.updateIssue(issue.id, title, desc, priority, type, category, item)
         })
     }
-    deletePhotoId?.let { pid ->
+    deletePhotoId?.let { (pid, isPending) ->
         ConfirmDialog(
             title = "Delete photo?",
-            message = "This photo will be permanently removed.",
+            message = if (isPending) "This photo has not been uploaded yet and will be discarded."
+            else "This photo will be permanently removed.",
             loading = vm.uploading,
-            onConfirm = { vm.deletePhoto(pid); deletePhotoId = null },
+            onConfirm = { vm.deletePhoto(pid, isPending); deletePhotoId = null },
             onDismiss = { deletePhotoId = null },
         )
     }
@@ -551,4 +560,18 @@ internal fun AddIssueDialog(
             else AppButton("Back", onClick = { step = 0 }, variant = ButtonVariant.Neutral)
         },
     )
+}
+
+/** Corner marker on a thumbnail: queued for upload, or gave up. */
+@Composable
+private fun BoxScope.PhotoBadge(glyph: String, color: Color) {
+    Surface(
+        shape = CircleShape,
+        color = color,
+        modifier = Modifier.align(Alignment.TopEnd).padding(2.dp).size(16.dp),
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(glyph, color = White, style = MaterialTheme.typography.labelSmall)
+        }
+    }
 }

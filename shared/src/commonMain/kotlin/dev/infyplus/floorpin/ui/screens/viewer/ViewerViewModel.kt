@@ -80,7 +80,7 @@ class ViewerViewModel(
     fun addIssue(locationId: String, title: String, desc: String?, status: IssueStatus, priority: IssuePriority, type: String? = null, category: String? = null, item: String? = null, x: Double? = null, y: Double? = null): Issue =
         container.data.issues.create(locationId, title, desc, status, priority, type, category, item, x, y).also { container.sync.requestSync() }
 
-    /** Create the issue (offline-ok) then upload optional photos (online-only, separate endpoint). */
+    /** Create the issue and record its photos; both are offline-safe and sync in dependency order. */
     fun addIssueWithPhoto(
         locationId: String, title: String, desc: String?, status: IssueStatus, priority: IssuePriority,
         type: String?, category: String?, item: String?, x: Double?, y: Double?, photos: List<Pair<ByteArray, String>>,
@@ -94,7 +94,13 @@ class ViewerViewModel(
     fun updateIssue(id: String, title: String, desc: String?, priority: IssuePriority, type: String?, category: String?, item: String?) {
         container.data.issues.update(id, title, desc, priority, type, category, item); container.sync.requestSync()
     }
-    fun deletePhoto(photoId: String) = viewModelScope.launch {
+    fun deletePhoto(photoId: String, pending: Boolean) = viewModelScope.launch {
+        // A pending photo has never reached the server, so deleting it is purely local and works
+        // offline. Calling the REST endpoint for it would 404.
+        if (pending) {
+            container.data.issues.deletePhoto(photoId)
+            return@launch
+        }
         uploading = true; error = null
         runCatching { container.api.deletePhoto(photoId) }
             .onSuccess { container.data.issues.deletePhoto(photoId) }
@@ -107,15 +113,19 @@ class ViewerViewModel(
     fun deleteIssue(id: String) {
         container.data.issues.delete(id); container.sync.requestSync()
     }
-    fun uploadPhoto(issueId: String, bytes: ByteArray, fileName: String) = viewModelScope.launch {
-        uploading = true; error = null
-        // Issues are created through the outbox but photos post directly, so a photo can reach the
-        // server before the issue it hangs off does — the server then rejects an issueId it has
-        // never seen. Drain the queue first so the parent row exists.
-        runCatching { container.sync.syncNow() }
-        runCatching { container.api.uploadPhoto(issueId, bytes, fileName) }
-            .onSuccess { container.data.issues.upsertPhotos(listOf(it.toRow())) }
-            .onFailure { error = it.message }
-        uploading = false
+    /**
+     * Records the photo locally and lets [SyncEngine] upload it.
+     *
+     * This used to upload first and only write the local row from the server's response, so any
+     * failure — offline, an unsynced parent issue, a dropped connection — left the bytes to be
+     * garbage collected and the photo was gone. Now the row and its bytes are committed before
+     * anything touches the network, and the queue handles ordering and retries.
+     */
+    fun uploadPhoto(issueId: String, bytes: ByteArray, fileName: String) {
+        container.data.issues.createLocalPhoto(issueId, bytes, fileName)
+        container.sync.requestSync()
     }
+
+    /** Bytes of a photo that hasn't uploaded yet, so the UI can render it from the local queue. */
+    fun photoBytes(photoId: String): ByteArray? = container.data.issues.photoBytes(photoId)
 }

@@ -53,6 +53,7 @@ import dev.infyplus.floorpin.ui.components.ImageLightbox
 import dev.infyplus.floorpin.ui.components.StatusBadge
 import dev.infyplus.floorpin.data.remote.sniffImageMime
 import dev.infyplus.floorpin.ui.components.downscaleImage
+import dev.infyplus.floorpin.ui.components.photoImageModel
 import dev.infyplus.floorpin.ui.components.photoImageUrl
 import dev.infyplus.floorpin.ui.rememberReportExporter
 import dev.infyplus.floorpin.ui.theme.Accent
@@ -164,7 +165,7 @@ fun ReportScreen(container: AppContainer, floorPlanId: String, onBack: () -> Uni
                     Text(loc.name, style = MaterialTheme.typography.headlineMedium, color = Ink)
                     Box(Modifier.fillMaxWidth().padding(top = 8.dp).height(1.dp).background(BorderColor))
                     (issuesByLoc[loc.id] ?: emptyList()).forEach { issue ->
-                        ReportIssueRow(issue, photosByIssue[issue.id] ?: emptyList())
+                        ReportIssueRow(issue, photosByIssue[issue.id] ?: emptyList(), container.data.issues::photoBytes)
                     }
                 }
             }
@@ -224,7 +225,7 @@ private fun PlanWithPins(fp: FloorPlan, url: String, locations: List<Location>, 
 }
 
 @Composable
-private fun ReportIssueRow(issue: Issue, photos: List<Photo>) {
+private fun ReportIssueRow(issue: Issue, photos: List<Photo>, bytesFor: (String) -> ByteArray?) {
     Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         Column(Modifier.weight(1f)) {
             Text("#${issue.id.take(8)} · ${issue.title}", style = MaterialTheme.typography.titleMedium, color = Ink)
@@ -242,9 +243,9 @@ private fun ReportIssueRow(issue: Issue, photos: List<Photo>) {
             coord(issue.x)?.let { cx -> coord(issue.y)?.let { cy -> Text("x:$cx / y:$cy", style = MaterialTheme.typography.labelSmall, color = Muted, modifier = Modifier.padding(top = 4.dp)) } }
         }
         if (photos.isNotEmpty()) {
-            var lightboxUrl by remember { mutableStateOf<String?>(null) }
-            photoImageUrl(photos.first())?.let { url ->
-                AsyncImage(url, "Evidence", Modifier.size(120.dp).background(SurfaceWarm, RoundedCornerShape(6.dp)).clickable { lightboxUrl = url }, contentScale = ContentScale.Crop)
+            var lightboxUrl by remember { mutableStateOf<Any?>(null) }
+            photoImageModel(photos.first(), bytesFor)?.let { model ->
+                AsyncImage(model, "Evidence", Modifier.size(120.dp).background(SurfaceWarm, RoundedCornerShape(6.dp)).clickable { lightboxUrl = model }, contentScale = ContentScale.Crop)
             }
             ImageLightbox(lightboxUrl) { lightboxUrl = null }
         }
@@ -279,35 +280,56 @@ private suspend fun exportPdf(
 ): Int {
     val planImageUrl = floorPlan?.let { floorPlanImageUrl(it) }
     val seen = mutableSetOf<String>()
+    // Keyed by photo id, not by URL: a photo still queued for upload has no imageKey, and the old
+    // inline "${BASE_URL}/files/${p.imageKey}" produced the literal string ".../files/null".
+    // The plan image keeps its URL as the key since it has no photo row.
     planImageUrl?.let { seen.add(it) }
+    val photoIds = mutableSetOf<String>()
     for (loc in withIssues) {
         for (issue in issuesByLoc[loc.id] ?: emptyList()) {
             // all evidence photos (the reference report shows a full gallery, not just the first)
-            photosByIssue[issue.id]?.forEach { p ->
-                seen.add("${Config.BASE_URL}/files/${p.imageKey}")
-            }
+            photosByIssue[issue.id]?.forEach { p -> photoIds.add(p.id) }
         }
     }
+    val photoById = photosByIssue.values.flatten().associateBy { it.id }
 
     // Fetch concurrently — awaiting each image in turn made a 40-photo export take tens of seconds.
     // Bounded so a large report doesn't open 40 sockets against the Worker at once.
     val gate = Semaphore(6)
     val fetched = coroutineScope {
-        seen.map { url ->
+        val planJob = seen.map { url ->
             // Off the main dispatcher: decoding and base64-ing megabytes of image would jank the UI.
             async(Dispatchers.Default) {
                 gate.withPermit {
                     runCatching {
-                        val bytes: ByteArray = container.http.get(url).body()
-                        // Issue photos print into a ~180x200px box, so the full 1600px upload was
-                        // ~8x the pixels needed; base64'd, that alone could OOM the print WebView.
                         // The plan image prints near full page width, so it stays as uploaded.
-                        val out = if (url == planImageUrl) bytes else downscaleImage(bytes, REPORT_PHOTO_EDGE, REPORT_PHOTO_QUALITY)
-                        url to "data:${sniffImageMime(out)};base64,${Base64.encode(out)}"
+                        val bytes: ByteArray = container.http.get(url).body()
+                        url to "data:${sniffImageMime(bytes)};base64,${Base64.encode(bytes)}"
                     }.getOrNull()
                 }
             }
-        }.awaitAll()
+        }
+        val photoJobs = photoIds.map { id ->
+            async(Dispatchers.Default) {
+                gate.withPermit {
+                    runCatching {
+                        val photo = photoById.getValue(id)
+                        // A pending photo lives only on this device — read the queued bytes rather
+                        // than asking the server for something it has never been sent.
+                        val bytes: ByteArray = if (photo.pending == 1L) {
+                            container.data.issues.photoBytes(id) ?: error("queued photo $id has no bytes")
+                        } else {
+                            container.http.get(photoImageUrl(photo) ?: error("photo $id has no source")).body()
+                        }
+                        // Issue photos print into a ~180x200px box, so the full 1600px upload was
+                        // ~8x the pixels needed; base64'd, that alone could OOM the print WebView.
+                        val out = downscaleImage(bytes, REPORT_PHOTO_EDGE, REPORT_PHOTO_QUALITY)
+                        id to "data:${sniffImageMime(out)};base64,${Base64.encode(out)}"
+                    }.getOrNull()
+                }
+            }
+        }
+        (planJob + photoJobs).awaitAll()
     }
     val dataUris = fetched.filterNotNull().toMap()
     val failed = fetched.count { it == null }
@@ -345,9 +367,9 @@ private fun buildReportHtml(
     val pages = withIssues.joinToString("") { loc ->
         val rows = (issuesByLoc[loc.id] ?: emptyList()).joinToString("") { i ->
             val photos = photosByIssue[i.id] ?: emptyList()
-            val primary = photos.firstOrNull()?.let { dataUris["${Config.BASE_URL}/files/${it.imageKey}"] }
+            val primary = photos.firstOrNull()?.let { dataUris[it.id] }
                 ?.let { """<img class="primary" src="$it" />""" } ?: ""
-            val gallery = photos.drop(1).mapNotNull { dataUris["${Config.BASE_URL}/files/${it.imageKey}"] }
+            val gallery = photos.drop(1).mapNotNull { dataUris[it.id] }
                 .joinToString("") { """<img src="$it" />""" }
                 .let { if (it.isBlank()) "" else """<div class="gallery">$it</div>""" }
 
