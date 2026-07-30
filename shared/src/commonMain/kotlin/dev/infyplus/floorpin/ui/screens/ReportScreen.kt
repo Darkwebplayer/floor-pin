@@ -21,6 +21,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -35,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import dev.infyplus.floorpin.AppContainer
@@ -47,6 +50,7 @@ import dev.infyplus.floorpin.domain.IssuePriority
 import dev.infyplus.floorpin.domain.IssueStatus
 import dev.infyplus.floorpin.ui.components.AppButton
 import dev.infyplus.floorpin.ui.components.AppCard
+import dev.infyplus.floorpin.ui.components.ButtonVariant
 import dev.infyplus.floorpin.ui.components.AppIcons
 import dev.infyplus.floorpin.ui.components.AppTopBar
 import dev.infyplus.floorpin.ui.components.ImageLightbox
@@ -67,13 +71,19 @@ import dev.infyplus.floorpin.ui.theme.White
 import floorpin.shared.generated.resources.Res
 import io.ktor.client.call.body
 import io.ktor.client.request.get
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.ExperimentalResourceApi
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
@@ -108,8 +118,12 @@ fun ReportScreen(container: AppContainer, floorPlanId: String, onBack: () -> Uni
     val exporter = rememberReportExporter()
     val planName = floorPlan?.name ?: "Floor plan"
     val scope = rememberCoroutineScope()
-    var exporting by remember { mutableStateOf(false) }
+    var progress by remember { mutableStateOf<ExportProgress?>(null) }
+    var exportJob by remember { mutableStateOf<Job?>(null) }
+    // Non-null while the export is parked waiting for the user to answer the stall prompt.
+    var stall by remember { mutableStateOf<CompletableDeferred<Boolean>?>(null) }
     var exportError by remember { mutableStateOf<String?>(null) }
+    val exporting = progress != null
 
     Column(Modifier.fillMaxSize().background(SurfaceWarm)) {
         AppTopBar(title = "Inspection report", crumb = planName, onBack = onBack) {
@@ -117,14 +131,36 @@ fun ReportScreen(container: AppContainer, floorPlanId: String, onBack: () -> Uni
                 if (exporting) "Exporting…" else "Export PDF",
                 loading = exporting,
                 onClick = {
-                    exportError = null; exporting = true
-                    scope.launch {
-                        val failed = exportPdf(container, exporter, floorPlan, planName, locations, issues, withIssues, issuesByLoc, photosByIssue, total, open, resolved)
-                        if (failed > 0) exportError = "$failed image(s) could not be loaded; exported with placeholders."
-                        exporting = false
+                    if (exporting) return@AppButton
+                    exportError = null
+                    progress = ExportProgress("Preparing export…")
+                    exportJob = scope.launch {
+                        try {
+                            val failed = exportPdf(
+                                container, exporter, floorPlan, planName, locations, issues, withIssues, issuesByLoc, photosByIssue, total, open, resolved,
+                                onStage = { stage, done, count -> progress = ExportProgress(stage, done, count) },
+                                onStalled = { n ->
+                                    val d = CompletableDeferred<Boolean>()
+                                    stall = d
+                                    progress = progress?.copy(stalled = n)
+                                    try { d.await() } finally { stall = null; progress = progress?.copy(stalled = 0) }
+                                },
+                            )
+                            if (failed > 0) exportError = "$failed image(s) could not be loaded; exported with placeholders."
+                        } finally {
+                            progress = null; stall = null
+                        }
                     }
                 },
                 small = true, leadingIcon = AppIcons.Download,
+            )
+        }
+        progress?.let { p ->
+            ExportProgressDialog(
+                p,
+                onRetry = { stall?.complete(true) },
+                onSkip = { stall?.complete(false) },
+                onCancel = { exportJob?.cancel() },
             )
         }
         exportError?.let {
@@ -171,6 +207,54 @@ fun ReportScreen(container: AppContainer, floorPlanId: String, onBack: () -> Uni
             }
         }
     }
+}
+
+/** Live state of a running export. [stalled] > 0 means it is parked on that many failed images. */
+private data class ExportProgress(val stage: String, val done: Int = 0, val total: Int = 0, val stalled: Int = 0)
+
+/**
+ * Blocking (non-dismissible) export progress dialog. The fetch runs in the screen's scope, so
+ * navigating away cancels it — hence the "stay on this screen" warning.
+ */
+@Composable
+private fun ExportProgressDialog(p: ExportProgress, onRetry: () -> Unit, onSkip: () -> Unit, onCancel: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = {},
+        properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
+        title = { Text(if (p.stalled > 0) "Export paused" else "Exporting report") },
+        text = {
+            Column {
+                Text(
+                    if (p.stalled > 0) "${p.stalled} image(s) could not be loaded — check your connection, then retry."
+                    else p.stage,
+                    style = MaterialTheme.typography.bodyMedium, color = Ink,
+                )
+                if (p.total > 0) {
+                    LinearProgressIndicator(
+                        progress = { p.done.toFloat() / p.total },
+                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                    )
+                    Text("${p.done} of ${p.total} images", style = MaterialTheme.typography.labelSmall, color = Muted, modifier = Modifier.padding(top = 6.dp))
+                } else if (p.stalled == 0) {
+                    LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 12.dp))
+                }
+                Text(
+                    "Stay on this screen — don't minimise the app until the export finishes.",
+                    style = MaterialTheme.typography.labelSmall, color = Muted,
+                    modifier = Modifier.padding(top = 12.dp),
+                )
+            }
+        },
+        confirmButton = {
+            if (p.stalled > 0) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AppButton("Skip images", onClick = onSkip, variant = ButtonVariant.Neutral)
+                    AppButton("Retry", onClick = onRetry)
+                }
+            }
+        },
+        dismissButton = { AppButton("Cancel", onClick = onCancel, variant = ButtonVariant.Danger) },
+    )
 }
 
 @Composable
@@ -277,6 +361,8 @@ private suspend fun exportPdf(
     total: Int,
     open: Int,
     resolved: Int,
+    onStage: (stage: String, done: Int, count: Int) -> Unit,
+    onStalled: suspend (failed: Int) -> Boolean,
 ): Int {
     val planImageUrl = floorPlan?.let { floorPlanImageUrl(it) }
     val seen = mutableSetOf<String>()
@@ -293,56 +379,76 @@ private suspend fun exportPdf(
     }
     val photoById = photosByIssue.values.flatten().associateBy { it.id }
 
+    // One fetcher per image, keyed the same way the HTML looks them up.
+    val tasks = LinkedHashMap<String, suspend () -> String>()
+    seen.forEach { url ->
+        tasks[url] = {
+            // The plan image prints near full page width, so it stays as uploaded.
+            val bytes: ByteArray = container.http.get(url).body()
+            "data:${sniffImageMime(bytes)};base64,${Base64.encode(bytes)}"
+        }
+    }
+    photoIds.forEach { id ->
+        tasks[id] = {
+            val photo = photoById.getValue(id)
+            // A pending photo lives only on this device — read the queued bytes rather
+            // than asking the server for something it has never been sent.
+            val bytes: ByteArray = if (photo.pending == 1L) {
+                container.data.issues.photoBytes(id) ?: error("queued photo $id has no bytes")
+            } else {
+                container.http.get(photoImageUrl(photo) ?: error("photo $id has no source")).body()
+            }
+            // Issue photos print into a ~180x200px box, so the full 1600px upload was
+            // ~8x the pixels needed; base64'd, that alone could OOM the print WebView.
+            val out = downscaleImage(bytes, REPORT_PHOTO_EDGE, REPORT_PHOTO_QUALITY)
+            "data:${sniffImageMime(out)};base64,${Base64.encode(out)}"
+        }
+    }
+
     // Fetch concurrently — awaiting each image in turn made a 40-photo export take tens of seconds.
     // Bounded so a large report doesn't open 40 sockets against the Worker at once.
     val gate = Semaphore(6)
-    val fetched = coroutineScope {
-        val planJob = seen.map { url ->
-            // Off the main dispatcher: decoding and base64-ing megabytes of image would jank the UI.
-            async(Dispatchers.Default) {
-                gate.withPermit {
-                    runCatching {
-                        // The plan image prints near full page width, so it stays as uploaded.
-                        val bytes: ByteArray = container.http.get(url).body()
-                        url to "data:${sniffImageMime(bytes)};base64,${Base64.encode(bytes)}"
-                    }.getOrNull()
-                }
-            }
-        }
-        val photoJobs = photoIds.map { id ->
-            async(Dispatchers.Default) {
-                gate.withPermit {
-                    runCatching {
-                        val photo = photoById.getValue(id)
-                        // A pending photo lives only on this device — read the queued bytes rather
-                        // than asking the server for something it has never been sent.
-                        val bytes: ByteArray = if (photo.pending == 1L) {
-                            container.data.issues.photoBytes(id) ?: error("queued photo $id has no bytes")
-                        } else {
-                            container.http.get(photoImageUrl(photo) ?: error("photo $id has no source")).body()
+    val dataUris = mutableMapOf<String, String>()
+    val done = MutableStateFlow(0)
+    var pending = tasks.keys.toList()
+    onStage("Fetching images…", 0, tasks.size)
+    // Round after round over whatever is still missing: a dropped connection mid-export parks on
+    // `onStalled` instead of silently shipping a report full of placeholder gaps.
+    while (pending.isNotEmpty()) {
+        val results = coroutineScope {
+            pending.map { key ->
+                // Off the main dispatcher: decoding and base64-ing megabytes of image would jank the UI.
+                async(Dispatchers.Default) {
+                    gate.withPermit {
+                        // One silent retry — a brief blip shouldn't drag the whole export to a prompt.
+                        var uri = runCatching { tasks.getValue(key)() }.getOrNull()
+                        if (uri == null) {
+                            delay(1500)
+                            uri = runCatching { tasks.getValue(key)() }.getOrNull()
                         }
-                        // Issue photos print into a ~180x200px box, so the full 1600px upload was
-                        // ~8x the pixels needed; base64'd, that alone could OOM the print WebView.
-                        val out = downscaleImage(bytes, REPORT_PHOTO_EDGE, REPORT_PHOTO_QUALITY)
-                        id to "data:${sniffImageMime(out)};base64,${Base64.encode(out)}"
-                    }.getOrNull()
+                        if (uri != null) onStage("Fetching images…", done.updateAndGet { it + 1 }, tasks.size)
+                        key to uri
+                    }
                 }
-            }
+            }.awaitAll()
         }
-        (planJob + photoJobs).awaitAll()
+        results.forEach { (key, uri) -> if (uri != null) dataUris[key] = uri }
+        pending = results.filter { it.second == null }.map { it.first }
+        // false = "export anyway"; cancelling the job just cancels this await.
+        if (pending.isNotEmpty() && !onStalled(pending.size)) break
     }
-    val dataUris = fetched.filterNotNull().toMap()
-    val failed = fetched.count { it == null }
+    val failed = pending.size
 
+    onStage("Creating PDF…", 0, 0)
     // Bundled asset, not a network fetch — a failure here shouldn't count toward `failed`.
     val footerUri = runCatching { "data:image/png;base64,${Base64.encode(Res.readBytes("drawable/footer.png"))}" }
         .getOrDefault("")
 
-    exporter(
-        buildReportHtml(planName, planImageUrl, allLocations, allIssues, withIssues, issuesByLoc, photosByIssue, dataUris, allLocations.size, total, open, resolved, footerUri),
-        "FloorPin — $planName",
-        Config.BASE_URL
-    )
+    // Off-main: concatenating tens of MB of base64 into one string stalls the progress dialog.
+    val html = withContext(Dispatchers.Default) {
+        buildReportHtml(planName, planImageUrl, allLocations, allIssues, withIssues, issuesByLoc, photosByIssue, dataUris, allLocations.size, total, open, resolved, footerUri)
+    }
+    exporter(html, "FloorPin — $planName", Config.BASE_URL)
     return failed
 }
 
