@@ -1,5 +1,6 @@
 package dev.infyplus.floorpin
 
+import dev.infyplus.floorpin.data.auth.AuthState
 import dev.infyplus.floorpin.data.auth.GoogleAuthProvider
 import dev.infyplus.floorpin.data.auth.SessionManager
 import dev.infyplus.floorpin.data.auth.TokenStore
@@ -22,6 +23,7 @@ class AppContainer(
     val api: ApiService,
     val data: DataStore,
     val session: SessionManager,
+    val auth: AuthState,
     val sync: SyncEngine,
 )
 
@@ -30,11 +32,12 @@ fun buildAppContainer(
     driverFactory: DriverFactory,
     google: GoogleAuthProvider,
 ): AppContainer {
-    val http = createHttpClient(tokens)
+    val authState = AuthState()
+    val http = createHttpClient(tokens, authState)
     val api = ApiService(http)
     val data = DataStore(createDatabase(driverFactory))
-    val session = SessionManager(tokens, google, api, data)
+    val session = SessionManager(tokens, google, api, data, authState)
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val sync = SyncEngine(data, api, scope)
-    return AppContainer(tokens, google, http, api, data, session, sync)
+    return AppContainer(tokens, google, http, api, data, session, authState, sync)
 }

@@ -103,11 +103,43 @@ private fun SyncBar(container: AppContainer) {
     val state by container.sync.state.collectAsStateWithLifecycle()
     val pending by container.sync.pending.collectAsStateWithLifecycle()
     val failed by container.sync.failed.collectAsStateWithLifecycle()
+    val sessionExpired by container.auth.expired.collectAsStateWithLifecycle()
     var showFailed by remember { mutableStateOf(false) }
+    var reauthError by remember { mutableStateOf<String?>(null) }
+    var reauthenticating by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
-    // Rejected work outranks pending work: pending resolves itself, rejected never will. It used to
-    // be deleted outright, which cleared this bar and read to the user as "everything synced".
-    if (failed > 0L) {
+    // Outranks everything below: while the token is dead nothing syncs, and the other bars would
+    // blame the network for it. Re-signing in here keeps the queue — the sign-out path wipes it.
+    if (sessionExpired) {
+        Box(
+            Modifier.fillMaxWidth()
+                .background(dev.infyplus.floorpin.ui.theme.Danger)
+                .clickable(enabled = !reauthenticating) {
+                    reauthenticating = true; reauthError = null
+                    scope.launch {
+                        runCatching { container.session.reauthenticate() }
+                            .onSuccess { container.sync.requestSync() }
+                            .onFailure { reauthError = it.message ?: "Sign-in failed" }
+                        reauthenticating = false
+                    }
+                }
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+        ) {
+            Text(
+                when {
+                    reauthenticating -> "Signing in…"
+                    reauthError != null -> "Sign-in failed: $reauthError — tap to retry"
+                    else -> "Session expired — tap to sign in" +
+                        if (pending > 0L) " ($pending change${if (pending == 1L) "" else "s"} waiting)" else ""
+                },
+                color = dev.infyplus.floorpin.ui.theme.White,
+                style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+            )
+        }
+    } else if (failed > 0L) {
+        // Rejected work outranks pending work: pending resolves itself, rejected never will. It used
+        // to be deleted outright, which cleared this bar and read as "everything synced".
         Box(
             Modifier.fillMaxWidth()
                 .background(dev.infyplus.floorpin.ui.theme.Danger)

@@ -1,12 +1,15 @@
 package dev.infyplus.floorpin.data.remote
 
 import dev.infyplus.floorpin.Config
+import dev.infyplus.floorpin.data.auth.AuthState
 import dev.infyplus.floorpin.data.auth.TokenStore
 import dev.infyplus.floorpin.data.db.AppJson
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.plugins.HttpSend
 import io.ktor.client.plugins.defaultRequest
+import io.ktor.client.plugins.plugin
 import io.ktor.client.plugins.logging.LogLevel
 import io.ktor.client.plugins.logging.Logging
 import io.ktor.client.request.delete
@@ -73,11 +76,26 @@ private fun ByteArray.ftypBrand(): String? {
     return decodeToString(8, 12)
 }
 
-fun createHttpClient(tokens: TokenStore): HttpClient = HttpClient {
+fun createHttpClient(tokens: TokenStore, auth: AuthState): HttpClient = HttpClient {
     install(ContentNegotiation) { json(AppJson) }
     install(Logging) { level = LogLevel.INFO }
     defaultRequest {
         tokens.token()?.let { header(HttpHeaders.Authorization, "Bearer $it") }
+    }
+}.apply {
+    // One place that notices the session died, rather than each screen discovering it separately.
+    // No silent refresh is attempted: minting a new token needs Credential Manager's account
+    // chooser and therefore a live Activity, which a background sync does not have.
+    plugin(HttpSend).intercept { request ->
+        val call = execute(request)
+        // The sign-in exchange itself is exempt — a 401 there is a failed login, not a dead session,
+        // and tripping the flag would make the login screen claim the session had expired.
+        if (call.response.status == HttpStatusCode.Unauthorized &&
+            !request.url.pathSegments.contains("sign-in")
+        ) {
+            auth.markExpired()
+        }
+        call
     }
 }
 
