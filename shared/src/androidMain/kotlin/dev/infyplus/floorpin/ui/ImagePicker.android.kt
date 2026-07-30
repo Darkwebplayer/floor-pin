@@ -45,13 +45,14 @@ private fun applyExifOrientation(raw: ByteArray, bmp: Bitmap): Bitmap {
     return Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
 }
 
-/** Decode → downscale longest edge to MAX_EDGE → apply EXIF orientation → WebP. Keeps uploads small. */
-private fun processImage(raw: ByteArray): ByteArray {
+/** Decode → downscale longest edge to MAX_EDGE → apply EXIF orientation → WebP. Keeps uploads small.
+ *  Any failure falls back to the original bytes: a larger upload beats a failed or corrupt one. */
+private fun processImage(raw: ByteArray): ByteArray = runCatching {
     val decoded = decodeScaled(raw, MAX_EDGE) ?: return raw
     val bmp = applyExifOrientation(raw, decoded)
     if (bmp !== decoded) decoded.recycle()
-    return bmp.compressWebp(IMAGE_QUALITY).also { bmp.recycle() }
-}
+    bmp.compressWebp(IMAGE_QUALITY).also { bmp.recycle() }
+}.getOrDefault(raw)
 
 @Composable
 actual fun rememberImagePicker(onImage: (bytes: ByteArray, fileName: String) -> Unit): () -> Unit {

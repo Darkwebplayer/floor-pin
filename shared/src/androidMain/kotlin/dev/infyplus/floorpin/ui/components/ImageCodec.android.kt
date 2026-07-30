@@ -11,17 +11,28 @@ internal const val MAX_EDGE = 1600
 /** WebP quality for uploads. ~q78 WebP tracks q85 JPEG, at roughly 30% fewer bytes. */
 internal const val IMAGE_QUALITY = 78
 
-/** WebP lossy is ~30% smaller than JPEG at matching quality. `WEBP_LOSSY` is API 30+;
- *  below that the deprecated `WEBP` enum is the same encoder (lossy whenever quality < 100). */
-@Suppress("DEPRECATION")
-internal fun Bitmap.compressWebp(quality: Int): ByteArray =
+private fun Bitmap.encode(format: Bitmap.CompressFormat, quality: Int): ByteArray? =
     ByteArrayOutputStream().use { out ->
-        val format =
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) Bitmap.CompressFormat.WEBP_LOSSY
-            else Bitmap.CompressFormat.WEBP
-        compress(format, quality, out)
-        out.toByteArray()
+        // compress() reports failure by returning false and writing nothing — it does not throw.
+        if (compress(format, quality, out)) out.toByteArray().takeIf { it.isNotEmpty() } else null
     }
+
+/** WebP lossy is ~30% smaller than JPEG at matching quality. `WEBP_LOSSY` is API 30+;
+ *  below that the deprecated `WEBP` enum is the same encoder (lossy whenever quality < 100).
+ *
+ *  Falls back to JPEG rather than returning the empty array an unchecked `compress()` would yield:
+ *  some bitmap configs (ALPHA_8, HARDWARE) have no WebP encoder, and a zero-byte upload reaches the
+ *  server as a corrupt file. Callers label the part by sniffing the bytes, so the fallback can't
+ *  mislabel the stored object. */
+@Suppress("DEPRECATION")
+internal fun Bitmap.compressWebp(quality: Int): ByteArray {
+    val webp =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) Bitmap.CompressFormat.WEBP_LOSSY
+        else Bitmap.CompressFormat.WEBP
+    return encode(webp, quality)
+        ?: encode(Bitmap.CompressFormat.JPEG, quality)
+        ?: error("Could not encode ${width}x$height bitmap ($config)")
+}
 
 /** Decode [bytes] with the longest edge at most [maxEdge] px. Sub-samples during decode so a
  *  12MP capture never lands in memory at full size, then scales the remainder exactly. */

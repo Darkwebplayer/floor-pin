@@ -109,6 +109,10 @@ class ViewerViewModel(
     }
     fun uploadPhoto(issueId: String, bytes: ByteArray, fileName: String) = viewModelScope.launch {
         uploading = true; error = null
+        // Issues are created through the outbox but photos post directly, so a photo can reach the
+        // server before the issue it hangs off does — the server then rejects an issueId it has
+        // never seen. Drain the queue first so the parent row exists.
+        runCatching { container.sync.syncNow() }
         runCatching { container.api.uploadPhoto(issueId, bytes, fileName) }
             .onSuccess { container.data.issues.upsertPhotos(listOf(it.toRow())) }
             .onFailure { error = it.message }

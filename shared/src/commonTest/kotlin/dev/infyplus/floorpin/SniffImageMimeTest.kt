@@ -1,6 +1,6 @@
 package dev.infyplus.floorpin
 
-import dev.infyplus.floorpin.ui.screens.sniffImageMime
+import dev.infyplus.floorpin.data.remote.sniffImageMime
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -22,6 +22,16 @@ class SniffImageMimeTest {
     )
 
     @Test fun gif() = assertEquals("image/gif", sniffImageMime(bytes(0x47, 0x49, 0x46, 0x38, 0x39, 0x61)))
+
+    // 4 size bytes + "ftyp" + brand. These reach us when the picker cannot re-encode an original.
+    private fun ftyp(brand: String) =
+        bytes(0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70) + brand.encodeToByteArray()
+
+    @Test fun heic() = assertEquals("image/heic", sniffImageMime(ftyp("heic")))
+
+    @Test fun avif() = assertEquals("image/avif", sniffImageMime(ftyp("avif")))
+
+    @Test fun unknownFtypBrandFallsBack() = assertEquals("image/jpeg", sniffImageMime(ftyp("qt  ")))
 
     @Test fun shortInputFallsBackInsteadOfThrowing() =
         assertEquals("image/jpeg", sniffImageMime(bytes(0xFF)))

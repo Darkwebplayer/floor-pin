@@ -17,6 +17,7 @@ import io.ktor.client.request.patch
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
@@ -33,6 +34,34 @@ import kotlinx.serialization.json.put
 
 private const val BASE = Config.BASE_URL
 
+/**
+ * Media type read from the leading magic bytes rather than the filename. The encoder picks the
+ * format (and can fall back), so the extension is a hint, not a fact — and an upload labelled with
+ * the wrong type is stored that way in R2 and served back wrong forever.
+ */
+internal fun sniffImageMime(b: ByteArray): String = when {
+    b.size >= 3 && b[0] == 0xFF.toByte() && b[1] == 0xD8.toByte() -> "image/jpeg"
+    b.size >= 8 && b[0] == 0x89.toByte() && b[1] == 'P'.code.toByte() -> "image/png"
+    b.size >= 12 && b[0] == 'R'.code.toByte() && b[8] == 'W'.code.toByte() -> "image/webp"
+    b.size >= 6 && b[0] == 'G'.code.toByte() && b[1] == 'I'.code.toByte() -> "image/gif"
+    else -> when (b.ftypBrand()) {
+        "avif", "avis" -> "image/avif"
+        "heic", "heix", "hevc", "heim", "heis", "mif1", "msf1" -> "image/heic"
+        else -> "image/jpeg"
+    }
+}
+
+/** ISO-BMFF brand from a `....ftyp<brand>` header — the container behind HEIC and AVIF. The picker
+ *  hands back the untouched original whenever it cannot re-encode, and on an iPhone-sourced photo
+ *  that original is HEIC; labelling it `image/jpeg` would store it mislabelled in R2 for good. */
+private fun ByteArray.ftypBrand(): String? {
+    if (size < 12) return null
+    if (this[4] != 'f'.code.toByte() || this[5] != 't'.code.toByte() ||
+        this[6] != 'y'.code.toByte() || this[7] != 'p'.code.toByte()
+    ) return null
+    return decodeToString(8, 12)
+}
+
 fun createHttpClient(tokens: TokenStore): HttpClient = HttpClient {
     install(ContentNegotiation) { json(AppJson) }
     install(Logging) { level = LogLevel.INFO }
@@ -47,8 +76,24 @@ private data class SessionDto(val user: UserDto? = null)
 @Serializable
 private data class ListUsersResponse(val users: List<UserDto> = emptyList())
 
-/** Thin wrapper over the FloorPin REST API. Throws on non-2xx (Ktor default). */
+/**
+ * Thin wrapper over the FloorPin REST API.
+ *
+ * Ktor's `expectSuccess` is deliberately left off: [SyncEngine] reads the status of `/api/sync` to
+ * decide between retrying and dead-lettering, and [signInSocial] reports its own rejection message.
+ * The cost is that a failed request otherwise falls straight through to `.body<T>()` and surfaces
+ * as a `NoTransformationFoundException` naming the DTO, hiding whatever the server actually said —
+ * so the calls that decode a body go through [bodyOrThrow].
+ */
 class ApiService(private val client: HttpClient) {
+
+    private suspend inline fun <reified T> HttpResponse.bodyOrThrow(): T {
+        if (!status.isSuccess()) {
+            val detail = runCatching { bodyAsText() }.getOrDefault("").trim().take(300)
+            error("Server returned ${status.value}${if (detail.isEmpty()) "" else ": $detail"}")
+        }
+        return body()
+    }
 
     // ── auth ──
     /** Exchanges a Google ID token for a session bearer token (set-auth-token header). */
@@ -93,7 +138,7 @@ class ApiService(private val client: HttpClient) {
     suspend fun uploadFloorPlan(projectId: String, name: String, bytes: ByteArray, filename: String): FloorPlanDto =
         client.post("$BASE/api/projects/$projectId/floor-plans") {
             setBody(multipart(bytes, filename, extra = mapOf("name" to name)))
-        }.body()
+        }.bodyOrThrow()
 
     // ── locations / issues (reads; writes flow through /api/sync) ──
     suspend fun issues(locationId: String): List<IssueDto> =
@@ -103,7 +148,7 @@ class ApiService(private val client: HttpClient) {
     suspend fun uploadPhoto(issueId: String, bytes: ByteArray, filename: String): PhotoDto =
         client.post("$BASE/api/issues/$issueId/photos") {
             setBody(multipart(bytes, filename))
-        }.body()
+        }.bodyOrThrow()
     suspend fun deletePhoto(id: String) { client.delete("$BASE/api/photos/$id") }
 
     // ── activity ──
@@ -144,7 +189,7 @@ class ApiService(private val client: HttpClient) {
     // header AND keeps ours, producing a duplicate Content-Disposition that Cloudflare's
     // FormData parser can't read. Constructing PartData directly = exactly one per part.
     private fun multipart(bytes: ByteArray, filename: String, extra: Map<String, String> = emptyMap()): MultiPartFormDataContent {
-        println("FloorPin upload → field=file filename=\"$filename\" type=${imageMime(filename)} bytes=${bytes.size} extra=$extra")
+        println("FloorPin upload → field=file filename=\"$filename\" type=${sniffImageMime(bytes)} bytes=${bytes.size} extra=$extra")
         val parts = buildList {
             extra.forEach { (k, v) ->
                 add(PartData.FormItem(v, {}, Headers.build {
@@ -153,19 +198,9 @@ class ApiService(private val client: HttpClient) {
             }
             add(PartData.BinaryChannelItem({ ByteReadChannel(bytes) }, Headers.build {
                 append(HttpHeaders.ContentDisposition, "form-data; name=\"file\"; filename=\"$filename\"")
-                append(HttpHeaders.ContentType, imageMime(filename))
+                append(HttpHeaders.ContentType, sniffImageMime(bytes))
             }))
         }
         return MultiPartFormDataContent(parts)
     }
-
-    private fun imageMime(filename: String): String =
-        when (filename.substringAfterLast('.', "").lowercase()) {
-            "png" -> "image/png"
-            "webp" -> "image/webp"
-            "gif" -> "image/gif"
-            "heic" -> "image/heic"
-            "heif" -> "image/heif"
-            else -> "image/jpeg"
-        }
 }

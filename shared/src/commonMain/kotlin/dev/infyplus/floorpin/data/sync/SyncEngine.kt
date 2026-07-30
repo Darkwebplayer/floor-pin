@@ -48,6 +48,10 @@ class SyncEngine(
 
     fun requestSync() { scope.launch { flush() } }
 
+    /** Drain the outbox and wait for it. Callers that are about to hit an online-only endpoint for
+     *  a row created offline need the row on the server first; [requestSync] doesn't wait. */
+    suspend fun syncNow() = flush()
+
     private suspend fun flush() {
         mutex.withLock {
             val queued = data.q.outboxPending().executeAsList()

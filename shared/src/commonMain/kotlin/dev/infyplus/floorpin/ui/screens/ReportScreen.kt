@@ -51,6 +51,7 @@ import dev.infyplus.floorpin.ui.components.AppIcons
 import dev.infyplus.floorpin.ui.components.AppTopBar
 import dev.infyplus.floorpin.ui.components.ImageLightbox
 import dev.infyplus.floorpin.ui.components.StatusBadge
+import dev.infyplus.floorpin.data.remote.sniffImageMime
 import dev.infyplus.floorpin.ui.components.downscaleImage
 import dev.infyplus.floorpin.ui.components.photoImageUrl
 import dev.infyplus.floorpin.ui.rememberReportExporter
@@ -82,16 +83,6 @@ import kotlin.time.Instant
  *  which is ~560px at the print raster's 300dpi — 800 leaves headroom without bloating the HTML. */
 private const val REPORT_PHOTO_EDGE = 800
 private const val REPORT_PHOTO_QUALITY = 75
-
-/** Data URIs need a concrete media type — the wildcard we used before is not one, and Chromium
- *  only rendered it by sniffing. Read the magic bytes; stored objects predate the switch to WebP. */
-internal fun sniffImageMime(b: ByteArray): String = when {
-    b.size >= 3 && b[0] == 0xFF.toByte() && b[1] == 0xD8.toByte() -> "image/jpeg"
-    b.size >= 8 && b[0] == 0x89.toByte() && b[1] == 'P'.code.toByte() -> "image/png"
-    b.size >= 12 && b[0] == 'R'.code.toByte() && b[8] == 'W'.code.toByte() -> "image/webp"
-    b.size >= 6 && b[0] == 'G'.code.toByte() && b[1] == 'I'.code.toByte() -> "image/gif"
-    else -> "image/jpeg"
-}
 
 @OptIn(ExperimentalTime::class)
 private fun fmtDate(ms: Long): String =
