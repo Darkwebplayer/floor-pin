@@ -54,11 +54,31 @@ class Outbox(private val q: FloorpinQueries) {
         dev.infyplus.floorpin.data.db.AppJson.decodeFromString(JsonObject.serializer(), payload)
 }
 
+/**
+ * Whether a server list can be treated as the whole truth.
+ *
+ * With an empty queue the local DB should mirror the server, so a row the server didn't send has
+ * been deleted elsewhere and should go. While anything is queued, "absent from the server" also
+ * describes every row created offline that hasn't been sent yet — pruning then would delete the
+ * user's unsynced work, which is precisely the failure this codebase has been digging out of.
+ */
+private fun FloorpinQueries.safeToPrune(): Boolean =
+    outboxCount().executeAsOne() == 0L && pendingPhotoCount().executeAsOne() == 0L
+
+/** `NOT IN ()` is a syntax error, and an empty server list means "delete everything" — no id is "". */
+private fun List<String>.orNoMatch(): List<String> = ifEmpty { listOf("") }
+
 class ProjectRepo(private val q: FloorpinQueries) {
     fun observeAll(): Flow<List<Project>> = q.projectsAll().asFlow().mapToList(Dispatchers.Default)
     suspend fun byId(id: String): Project? = q.projectById(id).executeAsOneOrNull()
 
     fun upsertFromServer(items: List<Project>) = q.transaction {
+        items.forEach { q.upsertProject(it.id, it.name, it.description, it.createdAt, it.updatedAt) }
+    }
+
+    /** Full-list refresh: upsert what the server has and drop what it doesn't. */
+    fun replaceFromServer(items: List<Project>) = q.transaction {
+        if (q.safeToPrune()) q.deleteProjectsNotIn(items.map { it.id }.orNoMatch())
         items.forEach { q.upsertProject(it.id, it.name, it.description, it.createdAt, it.updatedAt) }
     }
     fun remove(id: String) = q.deleteProject(id)
@@ -70,6 +90,12 @@ class FloorPlanRepo(private val q: FloorpinQueries) {
     suspend fun byId(id: String): FloorPlan? = q.floorPlanById(id).executeAsOneOrNull()
 
     fun upsertFromServer(items: List<FloorPlan>) = q.transaction {
+        items.forEach { q.upsertFloorPlan(it.id, it.projectId, it.name, it.sub, it.imageKey, it.imageUrl, it.createdAt, it.updatedAt, it.width, it.height) }
+    }
+
+    /** Full-list refresh for one project: upsert what the server has and drop what it doesn't. */
+    fun replaceFromServer(projectId: String, items: List<FloorPlan>) = q.transaction {
+        if (q.safeToPrune()) q.deleteFloorPlansNotIn(projectId, items.map { it.id }.orNoMatch())
         items.forEach { q.upsertFloorPlan(it.id, it.projectId, it.name, it.sub, it.imageKey, it.imageUrl, it.createdAt, it.updatedAt, it.width, it.height) }
     }
     fun cacheOne(fp: FloorPlan) =
@@ -208,5 +234,27 @@ class DataStore(val db: FloorPinDb) {
     val issues = IssueRepo(q, outbox)
 
     fun pendingOpCount(): Long = q.outboxCount().executeAsOne()
+
+    /** See [safeToPrune] — false while anything is queued, so callers never delete unsent work. */
+    fun canPrune(): Boolean = q.safeToPrune()
+
+    /**
+     * Delete rows whose parent is gone. The schema declares no SQL foreign keys, so pruning a
+     * project or floor plan strands its whole subtree — invisible in the UI, but it keeps a photo
+     * blob alive for an issue nobody can reach.
+     *
+     * Skipped entirely while anything is queued, for the same reason pruning is.
+     */
+    fun sweepOrphans() {
+        if (!q.safeToPrune()) return
+        q.transaction {
+            q.deleteOrphanFloorPlans()
+            q.deleteOrphanLocations()
+            q.deleteOrphanIssues()
+            q.deleteOrphanPhotos()
+            q.deleteOrphanPhotoBlobs()
+        }
+    }
+
     fun clear() = q.clearAll()
 }

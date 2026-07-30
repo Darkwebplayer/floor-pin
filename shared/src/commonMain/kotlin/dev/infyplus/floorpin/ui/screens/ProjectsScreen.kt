@@ -56,7 +56,12 @@ class ProjectsViewModel(private val container: AppContainer) : ViewModel() {
     fun refresh() = viewModelScope.launch {
         refreshing = true; error = null
         runCatching { container.api.projects() }
-            .onSuccess { dtos -> container.data.projects.upsertFromServer(dtos.map { it.toRow() }) }
+            .onSuccess { dtos ->
+                // Full list, so it replaces rather than merges — a project deleted elsewhere used to
+                // linger here forever and 404 the moment you opened anything inside it.
+                container.data.projects.replaceFromServer(dtos.map { it.toRow() })
+                container.data.sweepOrphans()
+            }
             .onFailure { error = it.message }
         refreshing = false
     }

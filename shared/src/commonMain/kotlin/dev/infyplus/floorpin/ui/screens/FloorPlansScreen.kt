@@ -66,7 +66,10 @@ class FloorPlansViewModel(private val container: AppContainer, private val proje
     fun refresh() = viewModelScope.launch {
         refreshing = true; error = null
         runCatching { container.api.floorPlans(projectId) }
-            .onSuccess { dtos -> container.data.floorPlans.upsertFromServer(dtos.map { it.toRow() }) }
+            .onSuccess { dtos ->
+                container.data.floorPlans.replaceFromServer(projectId, dtos.map { it.toRow() })
+                container.data.sweepOrphans()
+            }
             .onFailure { error = it.message }
         refreshing = false
     }

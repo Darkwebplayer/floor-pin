@@ -219,6 +219,25 @@ UPDATE outbox SET failedAt = NULL, lastError = NULL, attempts = 0 WHERE opId = ?
 discardFailed:
 DELETE FROM outbox WHERE failedAt IS NOT NULL;
 
+-- ── server reconciliation ──
+-- A refresh that only upserts can never forget. Anything deleted on another device stayed on this
+-- one forever, and opening it produced a 404 against an id the server has never heard of.
+deleteProjectsNotIn:
+DELETE FROM project WHERE id NOT IN ?;
+deleteFloorPlansNotIn:
+DELETE FROM floorPlan WHERE projectId = ? AND id NOT IN ?;
+-- Cascade by hand: no SQL foreign keys in this schema, so a pruned parent leaves its subtree behind.
+deleteOrphanFloorPlans:
+DELETE FROM floorPlan WHERE projectId NOT IN (SELECT id FROM project);
+deleteOrphanLocations:
+DELETE FROM location WHERE floorPlanId NOT IN (SELECT id FROM floorPlan);
+deleteOrphanIssues:
+DELETE FROM issue WHERE locationId NOT IN (SELECT id FROM location);
+deleteOrphanPhotos:
+DELETE FROM photo WHERE issueId NOT IN (SELECT id FROM issue);
+deleteOrphanPhotoBlobs:
+DELETE FROM photoBlob WHERE photoId NOT IN (SELECT id FROM photo);
+
 -- ── maintenance ──
 clearAll {
 DELETE FROM project;

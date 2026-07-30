@@ -3,6 +3,8 @@ package dev.infyplus.floorpin.ui.screens.viewer
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.infyplus.floorpin.AppContainer
+import dev.infyplus.floorpin.data.remote.ApiHttpException
+import io.ktor.http.HttpStatusCode
 import dev.infyplus.floorpin.data.remote.toRow
 import dev.infyplus.floorpin.db.FloorPlan
 import dev.infyplus.floorpin.db.Issue
@@ -53,7 +55,18 @@ class ViewerViewModel(
                     list.forEach { i -> i.photos?.let { ph -> container.data.issues.upsertPhotos(ph.map { it.toRow() }) } }
                 }
             }
-        }.onFailure { error = it.message }
+        }.onFailure { e ->
+            // The plan was deleted elsewhere while we were looking at it. Drop the stale local copy
+            // so backing out lands on a list that matches the server, instead of an entry that
+            // 404s every time it is opened.
+            if (e is ApiHttpException && e.status == HttpStatusCode.NotFound && container.data.canPrune()) {
+                container.data.floorPlans.remove(floorPlanId)
+                container.data.sweepOrphans()
+                error = "This floor plan no longer exists on the server."
+            } else {
+                error = e.message
+            }
+        }
         refreshing = false
     }
 
