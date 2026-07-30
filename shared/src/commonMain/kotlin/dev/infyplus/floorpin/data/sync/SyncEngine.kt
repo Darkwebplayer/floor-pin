@@ -56,12 +56,19 @@ internal enum class OpOutcome { Dequeue, Bump, DeadLetter, Retry }
  * idempotent server-side. Any status this client doesn't recognise is treated the same way, so a
  * new server status can never silently delete work.
  */
-internal fun opOutcome(verdict: String?, attempts: Long): OpOutcome = when (verdict) {
-    "applied", "stale", "missing" -> OpOutcome.Dequeue
-    "rejected" -> OpOutcome.DeadLetter
-    "missing_parent", "failed" ->
-        if (attempts + 1 >= MAX_ATTEMPTS) OpOutcome.DeadLetter else OpOutcome.Bump
-    else -> OpOutcome.Retry
+internal fun opOutcome(op: String, verdict: String?, attempts: Long): OpOutcome {
+    val boundedRetry = if (attempts + 1 >= MAX_ATTEMPTS) OpOutcome.DeadLetter else OpOutcome.Bump
+    return when (verdict) {
+        "applied", "stale" -> OpOutcome.Dequeue
+        // `missing` means the server has no such row. For a delete that is the end state we wanted.
+        // For an update it can instead mean the create ahead of it in the queue hasn't landed yet
+        // (it came back missing_parent), and dropping the update then loses the edit for good — the
+        // create eventually applies the pre-edit values and refresh() overwrites the local copy.
+        "missing" -> if (op == "delete") OpOutcome.Dequeue else boundedRetry
+        "rejected" -> OpOutcome.DeadLetter
+        "missing_parent", "failed" -> boundedRetry
+        else -> OpOutcome.Retry
+    }
 }
 
 /** Send order: a child op must never precede the parent it references. */
@@ -240,7 +247,7 @@ class SyncEngine(
         val verdicts = body?.results.orEmpty().associate { it.id to it.status }
         data.q.transaction {
             sent.forEach { row ->
-                when (opOutcome(verdicts[row.entityId], row.attempts)) {
+                when (opOutcome(row.op, verdicts[row.entityId], row.attempts)) {
                     OpOutcome.Dequeue -> data.q.dequeue(row.opId)
                     OpOutcome.Bump -> data.q.bumpAttempts(row.opId)
                     OpOutcome.DeadLetter -> data.q.markFailed(
