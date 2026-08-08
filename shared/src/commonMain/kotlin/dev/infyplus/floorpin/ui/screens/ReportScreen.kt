@@ -489,6 +489,7 @@ private fun buildReportHtml(
 
             """
             <div class="issue">
+              <div class="ikeep">
               <div class="ihead">#${esc(i.id.take(8))} - ${esc(i.title)}</div>
               <div class="itop">
                 <div class="ileft">
@@ -504,6 +505,7 @@ private fun buildReportHtml(
                   ${if (!i.description.isNullOrBlank()) """<p class="desc">${esc(i.description)}</p>""" else ""}
                 </div>
                 <div class="iright">$coords$primary</div>
+              </div>
               </div>
               $gallery
             </div>
@@ -574,6 +576,9 @@ private fun buildReportHtml(
           .locbar{background:#eef1e0;border:1px solid #e0e4cf;border-radius:4px;padding:8px 12px;font-size:15px;color:#061b31;margin-bottom:16px}
           .issue{padding:4px 0 16px;border-bottom:1px solid #e5edf5;margin-bottom:16px}
           .ihead{font-size:17px;font-weight:700;color:#061b31;border-bottom:2px solid #9aa4b1;padding-bottom:6px;margin-bottom:10px}
+          /* Header + details + primary photo are one unbreakable unit; the extra-photo
+             gallery sits outside it and may spill to the next page. */
+          .ikeep{break-inside:avoid;page-break-inside:avoid}
           .itop{display:flex;gap:16px;justify-content:space-between}
           .ileft{flex:1}
           .iright{text-align:right;flex-shrink:0}
