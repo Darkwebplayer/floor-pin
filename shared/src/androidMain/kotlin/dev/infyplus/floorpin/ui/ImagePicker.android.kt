@@ -4,8 +4,11 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.media.ExifInterface
+import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts.PickMultipleVisualMedia
 import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
 import androidx.activity.result.contract.ActivityResultContracts.TakePicture
 import androidx.compose.runtime.Composable
@@ -54,21 +57,51 @@ private fun processImage(raw: ByteArray): ByteArray = runCatching {
     bmp.compressWebp(IMAGE_QUALITY).also { bmp.recycle() }
 }.getOrDefault(raw)
 
+/** A whole camera roll would be decoded into memory at once and then stack up that many
+ *  mark-photo screens. 20 is well past what one issue needs and keeps the batch bounded. */
+private const val MAX_BATCH = 20
+
 @Composable
-actual fun rememberImagePicker(onImage: (bytes: ByteArray, fileName: String) -> Unit): () -> Unit {
+actual fun rememberImagePicker(
+    multiple: Boolean,
+    onImages: (images: List<Pair<ByteArray, String>>) -> Unit,
+): () -> Unit {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val launcher = rememberLauncherForActivityResult(PickVisualMedia()) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        scope.launch {
-            val bytes = withContext(Dispatchers.IO) {
-                context.contentResolver.openInputStream(uri)?.use { processImage(it.readBytes()) }
-            } ?: return@launch
-            onImage(bytes, "upload_${nowMillis()}.webp")
+    // Two contracts, one handler: PickMultipleVisualMedia can't be asked for a single item
+    // (it requires maxItems >= 2), so single-select still goes through PickVisualMedia.
+    val handle: (List<Uri>) -> Unit = { uris ->
+        if (uris.isNotEmpty()) scope.launch {
+            // Decoding a batch takes seconds; without this the button looks dead.
+            if (uris.size > 1) toast(context, "Preparing ${uris.size} photos…")
+            val images = withContext(Dispatchers.IO) {
+                uris.mapIndexedNotNull { i, uri ->
+                    // A picked URI can still fail to open — permission revoked on the way back,
+                    // or a cloud-only photo that never downloads. Skip it, keep the rest.
+                    runCatching {
+                        context.contentResolver.openInputStream(uri)?.use { processImage(it.readBytes()) }
+                    }.getOrNull()?.let { it to "upload_${nowMillis()}_$i.webp" }
+                }
+            }
+            val failed = uris.size - images.size
+            if (failed > 0) toast(
+                context,
+                if (images.isEmpty()) "Couldn't open the photo${if (uris.size > 1) "s" else ""} you picked. Try again."
+                else "$failed of ${uris.size} photos couldn't be opened — carrying on with the rest.",
+            )
+            if (images.isNotEmpty()) onImages(images)
         }
     }
-    return { launcher.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly)) }
+    val single = rememberLauncherForActivityResult(PickVisualMedia()) { handle(listOfNotNull(it)) }
+    val multi = rememberLauncherForActivityResult(PickMultipleVisualMedia(MAX_BATCH)) { handle(it) }
+    return {
+        val req = PickVisualMediaRequest(PickVisualMedia.ImageOnly)
+        if (multiple) multi.launch(req) else single.launch(req)
+    }
 }
+
+private fun toast(context: android.content.Context, message: String) =
+    Toast.makeText(context, message, Toast.LENGTH_LONG).show()
 
 @Composable
 actual fun rememberCameraCapture(onImage: (bytes: ByteArray, fileName: String) -> Unit): () -> Unit {

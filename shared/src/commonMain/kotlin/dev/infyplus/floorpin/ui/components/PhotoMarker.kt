@@ -19,6 +19,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -82,47 +83,62 @@ private val MARKER_COLORS = listOf(
 private const val DEFAULT_STROKE_WIDTH_DP = 5f
 
 /**
- * Returns a launcher: call it with (bytes, fileName, onResult).
- * Shows a full-screen annotation dialog; onResult receives the
- * flattened bytes (or null if cancelled).
+ * Returns a launcher: call it with a list of (bytes, fileName) and a per-photo callback.
+ * Marks them one at a time, in order, and calls [onResult] as each is saved — so the caller
+ * can queue each upload immediately instead of waiting for the whole batch. Cancel skips
+ * only the photo on screen; the rest of the batch still comes up.
  */
 @Composable
-fun rememberPhotoMarker(): (bytes: ByteArray, fileName: String, onResult: (PhotoMarkerResult?) -> Unit) -> Unit {
-    var dialogState by remember { mutableStateOf<MarkerDialogState?>(null) }
+fun rememberPhotoMarker(): (images: List<Pair<ByteArray, String>>, onResult: (PhotoMarkerResult) -> Unit) -> Unit {
+    var state by remember { mutableStateOf<MarkerQueue?>(null) }
 
-    if (dialogState != null) {
-        val s = dialogState!!
-        PhotoMarkerDialog(
-            imageBytes = s.bytes,
-            fileName = s.fileName,
-            onDone = { flattened ->
-                s.onResult(PhotoMarkerResult(flattened, s.fileName))
-                dialogState = null
-            },
-            onCancel = {
-                s.onResult(null)
-                dialogState = null
-            },
-        )
+    val queue = state
+    val head = queue?.remaining?.firstOrNull()
+    if (queue != null && head != null) {
+        val (bytes, fileName) = head
+        // Keyed so the next photo starts with a clean slate — strokes/colour/rotation are
+        // remembered inside the dialog and would otherwise carry over from the previous one.
+        key(bytes) {
+            PhotoMarkerDialog(
+                imageBytes = bytes,
+                title = if (queue.total > 1) "Mark photo ${queue.total - queue.remaining.size + 1} of ${queue.total}" else "Mark photo",
+                onDone = { flattened ->
+                    state = queue.copy(remaining = queue.remaining.drop(1))
+                    queue.onResult(PhotoMarkerResult(flattened, fileName))
+                },
+                onCancel = { state = queue.copy(remaining = queue.remaining.drop(1)) },
+                // Back is disabled and the dialog is modal, so without this a mis-picked
+                // batch of 20 can only be escaped by tapping ✕ twenty times.
+                onSkipRest = if (queue.remaining.size > 1) ({ state = null }) else null,
+            )
+        }
     }
 
-    return { bytes, fileName, onResult ->
-        dialogState = MarkerDialogState(bytes, fileName, onResult)
+    return { images, onResult ->
+        if (images.isNotEmpty()) {
+            val live = state?.takeIf { it.remaining.isNotEmpty() }
+            // A second batch can land while one is still being marked (the picker keeps
+            // working during the seconds a batch takes to decode). Append — replacing it
+            // would drop the photos already picked without a trace.
+            state = live?.copy(remaining = live.remaining + images, total = live.total + images.size)
+                ?: MarkerQueue(images, images.size, onResult)
+        }
     }
 }
 
-private data class MarkerDialogState(
-    val bytes: ByteArray,
-    val fileName: String,
-    val onResult: (PhotoMarkerResult?) -> Unit,
+private data class MarkerQueue(
+    val remaining: List<Pair<ByteArray, String>>,
+    val total: Int,
+    val onResult: (PhotoMarkerResult) -> Unit,
 )
 
 @Composable
 private fun PhotoMarkerDialog(
     imageBytes: ByteArray,
-    fileName: String,
+    title: String,
     onDone: (ByteArray) -> Unit,
     onCancel: () -> Unit,
+    onSkipRest: (() -> Unit)? = null,
 ) {
     // Working bytes: rotate re-orients these so display + flatten stay in sync. Rotation is always
     // re-derived from the source rather than applied to the previous result — the button only turns
@@ -161,7 +177,17 @@ private fun PhotoMarkerDialog(
                     ) {
                         Icon(AppIcons.Close, "Cancel", Modifier.size(24.dp), tint = White)
                     }
-                    Text("Mark photo", style = MaterialTheme.typography.labelSmall, color = White)
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(title, style = MaterialTheme.typography.labelSmall, color = White)
+                        if (onSkipRest != null) {
+                            Text(
+                                "Skip the rest",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = White.copy(alpha = 0.6f),
+                                modifier = Modifier.padding(top = 2.dp).clickable(onClick = onSkipRest),
+                            )
+                        }
+                    }
                     Surface(
                         onClick = {
                             val result = if (strokes.isEmpty()) bytes

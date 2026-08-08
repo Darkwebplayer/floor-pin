@@ -62,6 +62,7 @@ import dev.infyplus.floorpin.ui.components.StatusBadge
 import dev.infyplus.floorpin.ui.components.photoImageModel
 import dev.infyplus.floorpin.ui.components.rememberValidator
 import dev.infyplus.floorpin.ui.components.validateRequired
+import dev.infyplus.floorpin.ui.components.PhotoMarkerResult
 import dev.infyplus.floorpin.ui.components.rememberPhotoMarker
 import dev.infyplus.floorpin.ui.rememberCameraCapture
 import dev.infyplus.floorpin.ui.rememberImagePicker
@@ -270,16 +271,11 @@ private fun IssueDetail(vm: ViewerViewModel, location: Location, issue: Issue, o
     var deletePhotoId by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
     var confirmDelete by remember { mutableStateOf(false) }
     val annotate = rememberPhotoMarker()
-    val pick = rememberImagePicker { bytes, name ->
-        annotate(bytes, name) { result ->
-            if (result != null) vm.uploadPhoto(issue.id, result.bytes, result.fileName)
-        }
-    }
-    val capture = rememberCameraCapture { bytes, name ->
-        annotate(bytes, name) { result ->
-            if (result != null) vm.uploadPhoto(issue.id, result.bytes, result.fileName)
-        }
-    }
+    // Each photo is queued for upload the moment it is marked, so a long batch uploads
+    // in the background while the inspector is still marking the rest.
+    val save: (PhotoMarkerResult) -> Unit = { vm.uploadPhoto(issue.id, it.bytes, it.fileName) }
+    val pick = rememberImagePicker(multiple = true) { images -> annotate(images, save) }
+    val capture = rememberCameraCapture { bytes, name -> annotate(listOf(bytes to name), save) }
 
     val meta = listOfNotNull(
         "Priority" to IssuePriority.fromWire(issue.priority).label,
@@ -469,16 +465,9 @@ internal fun AddIssueDialog(
     val photos = remember { mutableStateListOf<Pair<ByteArray, String>>() }
     val validator = rememberValidator()
     val annotate = rememberPhotoMarker()
-    val pickGallery = rememberImagePicker { bytes, name ->
-        annotate(bytes, name) { result ->
-            if (result != null) { photos.add(result.bytes to result.fileName) }
-        }
-    }
-    val takePhoto = rememberCameraCapture { bytes, name ->
-        annotate(bytes, name) { result ->
-            if (result != null) { photos.add(result.bytes to result.fileName) }
-        }
-    }
+    val save: (PhotoMarkerResult) -> Unit = { photos.add(it.bytes to it.fileName) }
+    val pickGallery = rememberImagePicker(multiple = true) { images -> annotate(images, save) }
+    val takePhoto = rememberCameraCapture { bytes, name -> annotate(listOf(bytes to name), save) }
 
     AlertDialog(
         onDismissRequest = onDismiss,

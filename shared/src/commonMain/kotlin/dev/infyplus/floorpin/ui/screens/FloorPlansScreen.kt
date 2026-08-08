@@ -187,7 +187,7 @@ private fun AddFloorPlanDialog(
 ) {
     var name by remember { mutableStateOf("") }
     var picked by remember { mutableStateOf<Pair<ByteArray, String>?>(null) }
-    val pick = rememberImagePicker { bytes, fileName -> picked = bytes to fileName }
+    val pick = rememberImagePicker { images -> picked = images.firstOrNull() }
     val validator = rememberValidator()
 
     AlertDialog(

@@ -4,7 +4,10 @@ import androidx.compose.runtime.Composable
 
 // Stub: image picking / camera are out of v1 iOS scope.
 @Composable
-actual fun rememberImagePicker(onImage: (bytes: ByteArray, fileName: String) -> Unit): () -> Unit = {}
+actual fun rememberImagePicker(
+    multiple: Boolean,
+    onImages: (images: List<Pair<ByteArray, String>>) -> Unit,
+): () -> Unit = {}
 
 @Composable
 actual fun rememberCameraCapture(onImage: (bytes: ByteArray, fileName: String) -> Unit): () -> Unit = {}

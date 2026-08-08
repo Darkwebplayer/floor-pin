@@ -135,8 +135,12 @@ class ViewerViewModel(
      * anything touches the network, and the queue handles ordering and retries.
      */
     fun uploadPhoto(issueId: String, bytes: ByteArray, fileName: String) {
-        container.data.issues.createLocalPhoto(issueId, bytes, fileName)
-        container.sync.requestSync()
+        // The local write can still fail (no disk left, above all). It runs straight off a UI
+        // callback, so an escaping exception takes the app down mid-batch and the inspector
+        // never learns which photo went missing.
+        runCatching { container.data.issues.createLocalPhoto(issueId, bytes, fileName) }
+            .onSuccess { container.sync.requestSync() }
+            .onFailure { error = "Couldn't save that photo — check your device storage." }
     }
 
     /** Bytes of a photo that hasn't uploaded yet, so the UI can render it from the local queue. */
